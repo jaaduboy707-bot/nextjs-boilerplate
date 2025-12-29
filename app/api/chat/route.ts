@@ -6,16 +6,12 @@ export async function POST(req: Request) {
     const userMessage = body.message;
 
     if (!userMessage) {
-      return NextResponse.json(
-        { error: "No message provided" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "No message provided" }, { status: 400 });
     }
 
-    const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${GEMINI_API_KEY}`,
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=" +
+        process.env.GEMINI_API_KEY,
       {
         method: "POST",
         headers: {
@@ -24,7 +20,6 @@ export async function POST(req: Request) {
         body: JSON.stringify({
           contents: [
             {
-              role: "user",
               parts: [{ text: userMessage }],
             },
           ],
@@ -33,16 +28,12 @@ export async function POST(req: Request) {
     );
 
     const data = await response.json();
-
     const reply =
-      data.candidates?.[0]?.content?.parts?.[0]?.text ||
+      data?.candidates?.[0]?.content?.parts?.[0]?.text ||
       "No response from AI";
 
     return NextResponse.json({ reply });
   } catch (error) {
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
-  }
+}
