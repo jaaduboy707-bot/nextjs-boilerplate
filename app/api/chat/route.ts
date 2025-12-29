@@ -2,52 +2,53 @@ import { NextResponse } from "next/server";
 
 export async function POST(req: Request) {
   try {
-    let userMessage = "Hello";
-
-    try {
-      const body = await req.json();
-      userMessage = body.message || body.prompt || "Hello";
-    } catch {
-      // ignore bad json
-    }
-
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
       return NextResponse.json(
-        { error: "Gemini API key missing" },
+        { error: "GEMINI_API_KEY not set" },
         { status: 500 }
       );
     }
 
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`,
+    const body = await req.json();
+    const userMessage = body.message || "Hello";
+
+    const geminiRes = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
       {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           contents: [
             {
-              parts: [{ text: userMessage }],
-            },
-          ],
-        }),
+              role: "user",
+              parts: [{ text: userMessage }]
+            }
+          ]
+        })
       }
     );
 
-    const data = await res.json();
+    const data = await geminiRes.json();
 
-    const reply =
-      data?.candidates?.[0]?.content?.parts?.[0]?.text ||
-      "No response from AI";
+    // SAFE EXTRACTION
+    let reply = "No response from AI";
+
+    if (
+      data?.candidates &&
+      data.candidates[0]?.content?.parts &&
+      data.candidates[0].content.parts[0]?.text
+    ) {
+      reply = data.candidates[0].content.parts[0].text;
+    }
 
     return NextResponse.json({ reply });
+
   } catch (error: any) {
-    console.error("CHAT API ERROR:", error);
+    console.error("API ERROR:", error);
     return NextResponse.json(
       { error: "Internal Server Error" },
       { status: 500 }
     );
   }
-        }
+}
