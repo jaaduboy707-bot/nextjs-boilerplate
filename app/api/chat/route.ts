@@ -1,32 +1,22 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
-export async function POST(req) {
+export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const message = body.message || body.prompt;
+    const userMessage = body.message;
 
-    if (!message) {
-      return NextResponse.json({ error: "No message provided" }, { status: 400 });
-    }
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+    const model = genAI.getGenerativeModel({ model: "gemini-pro" });
 
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      return NextResponse.json({ error: "API Key missing in Vercel" }, { status: 500 });
-    }
+    const result = await model.generateContent(userMessage);
+    const response = result.response.text();
 
-    const genAI = new GoogleGenerativeAI(apiKey);
-    // Using the stable 2.5 Flash model
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-
-    const result = await model.generateContent(message);
-    const response = await result.response;
-    
-    return NextResponse.json({ reply: response.text() });
-
+    return NextResponse.json({ reply: response });
   } catch (error) {
-    console.error("Gemini API Error:", error.message);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json(
+      { error: "Something went wrong" },
+      { status: 500 }
+    );
   }
 }
-
