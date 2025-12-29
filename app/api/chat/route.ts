@@ -1,4 +1,3 @@
-import { NextResponse } from "next/server";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
 export async function POST(req: Request) {
@@ -7,22 +6,33 @@ export async function POST(req: Request) {
     const message = body.message;
 
     if (!message) {
-      return NextResponse.json(
-        { error: "Message is required" },
+      return new Response(
+        JSON.stringify({ error: "No message provided" }),
         { status: 400 }
       );
     }
 
-    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const genAI = new GoogleGenerativeAI(
+      process.env.GEMINI_API_KEY as string
+    );
+
+    const model = genAI.getGenerativeModel({
+      model: "gemini-1.5-flash"
+    });
 
     const result = await model.generateContent(message);
-    const response = result.response.text();
+    const reply = result.response.text();
 
-    return NextResponse.json({ reply: response });
+    return new Response(
+      JSON.stringify({ reply }),
+      { status: 200 }
+    );
+
   } catch (error) {
-    return NextResponse.json(
-      { error: "Internal Server Error" },
+    console.error("API Error:", error);
+
+    return new Response(
+      JSON.stringify({ error: "Internal Server Error" }),
       { status: 500 }
     );
   }
