@@ -5,9 +5,9 @@ export async function POST(req: Request) {
     const body = await req.json().catch(() => ({}));
     const userMessage = body.message || body.prompt;
 
-    if (!userMessage) {
+    if (!userMessage || typeof userMessage !== "string") {
       return NextResponse.json(
-        { error: "No message provided" },
+        { error: "No valid message provided" },
         { status: 400 }
       );
     }
@@ -40,8 +40,19 @@ export async function POST(req: Request) {
 
     const data = await response.json();
 
+    //  Safety / blocked prompt handling
+    if (data?.promptFeedback?.blockReason) {
+      return NextResponse.json({
+        reply: "Prompt blocked by Gemini safety filters.",
+        reason: data.promptFeedback.blockReason,
+      });
+    }
+
+    //  Robust text extraction
     const reply =
-      data?.candidates?.[0]?.content?.parts?.[0]?.text;
+      data?.candidates?.[0]?.content?.parts
+        ?.map((p: any) => p.text)
+        ?.join("");
 
     if (!reply) {
       return NextResponse.json({
@@ -58,4 +69,4 @@ export async function POST(req: Request) {
       { status: 500 }
     );
   }
-}
+        }
