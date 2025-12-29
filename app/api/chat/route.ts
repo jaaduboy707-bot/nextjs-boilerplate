@@ -3,11 +3,11 @@ import { NextResponse } from "next/server";
 export async function POST(req: Request) {
   try {
     const body = await req.json().catch(() => ({}));
-    const userMessage = body.message || body.prompt;
+    const message = body.message;
 
-    if (!userMessage || typeof userMessage !== "string") {
+    if (!message || typeof message !== "string") {
       return NextResponse.json(
-        { error: "No valid message provided" },
+        { error: "Message is required" },
         { status: 400 }
       );
     }
@@ -20,26 +20,36 @@ export async function POST(req: Request) {
       );
     }
 
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.0-pro:generateContent?key=${apiKey}`,
+    const res = await fetch(
+      "https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent",
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "x-goog-api-key": apiKey,
+        },
         body: JSON.stringify({
           contents: [
             {
               role: "user",
-              parts: [{ text: userMessage }],
+              parts: [{ text: message }],
             },
           ],
+          generationConfig: {
+            temperature: 0.7,
+            maxOutputTokens: 512,
+          },
         }),
       }
     );
 
-    const data = await response.json();
+    const data = await res.json();
 
-    if (data?.error) {
-      return NextResponse.json({ error: data.error }, { status: 500 });
+    if (!res.ok) {
+      return NextResponse.json(
+        { error: data },
+        { status: res.status }
+      );
     }
 
     const reply =
@@ -49,7 +59,7 @@ export async function POST(req: Request) {
 
     if (!reply) {
       return NextResponse.json({
-        reply: "No text returned",
+        error: "No text returned",
         debug: data,
       });
     }
@@ -57,8 +67,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ reply });
   } catch (err: any) {
     return NextResponse.json(
-      { error: "Server error", detail: err.message },
+      { error: err.message || "Server error" },
       { status: 500 }
     );
   }
-}
+  }
