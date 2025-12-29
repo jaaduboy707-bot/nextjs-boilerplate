@@ -1,33 +1,48 @@
 import { NextResponse } from "next/server";
 
 export async function POST(req: Request) {
-  const body = await req.json();
-  const userMessage = body.message;
+  try {
+    const body = await req.json();
+    const userMessage = body.message;
 
-  const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${GEMINI_API_KEY}`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        contents: [
-          {
-            role: "user",
-            parts: [{ text: userMessage }],
-          },
-        ],
-      }),
+    if (!userMessage) {
+      return NextResponse.json(
+        { error: "No message provided" },
+        { status: 400 }
+      );
     }
-  );
 
-  const data = await response.json();
-  const reply =
-    data.candidates?.[0]?.content?.parts?.[0]?.text ||
-    "Something went wrong.";
+    const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
-  return NextResponse.json({ reply });
-}
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${GEMINI_API_KEY}`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          contents: [
+            {
+              role: "user",
+              parts: [{ text: userMessage }],
+            },
+          ],
+        }),
+      }
+    );
+
+    const data = await response.json();
+
+    const reply =
+      data.candidates?.[0]?.content?.parts?.[0]?.text ||
+      "No response from AI";
+
+    return NextResponse.json({ reply });
+  } catch (error) {
+    return NextResponse.json(
+      { error: "Internal server error" },
+      { status: 500 }
+    );
+  }
+  }
