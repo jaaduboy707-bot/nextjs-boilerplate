@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-export async function POST(req: Request) {
+export async function POST(req) {
   try {
     const body = await req.json().catch(() => ({}));
     const userMessage = body.message || body.prompt;
@@ -21,44 +21,32 @@ export async function POST(req: Request) {
     }
 
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
       {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           contents: [
             {
               role: "user",
-              parts: [{ text: userMessage }],
-            },
-          ],
-          generationConfig: {
-            temperature: 0.7,
-            maxOutputTokens: 500,
-          },
-        }),
+              parts: [{ text: userMessage }]
+            }
+          ]
+        })
       }
     );
 
     const data = await response.json();
 
     const reply =
-      data?.candidates?.[0]?.content?.parts?.[0]?.text;
-
-    if (!reply) {
-      return NextResponse.json({
-        reply: "Gemini responded but returned no text.",
-        debug: data,
-      });
-    }
+      data?.candidates?.[0]?.content?.parts?.[0]?.text ||
+      "Gemini responded but returned no text.";
 
     return NextResponse.json({ reply });
-  } catch (error: any) {
+  } catch (error) {
     console.error("SERVER ERROR:", error);
     return NextResponse.json(
-      { error: "Internal Server Error", detail: error.message },
+      { error: "Internal Server Error" },
       { status: 500 }
     );
   }
