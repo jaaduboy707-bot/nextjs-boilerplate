@@ -1,43 +1,28 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
-
-export async function POST(req: NextRequest) {
+export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const userMessage = body.message;
+    const message = body.message;
 
-    if (!userMessage) {
+    if (!message) {
       return NextResponse.json(
-        { error: "No message provided" },
+        { error: "Message is required" },
         { status: 400 }
       );
     }
 
-    const model = genAI.getGenerativeModel({
-      model: "gemini-1.5-flash",
-    });
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-    const systemPrompt = `
-You are a helpful AI assistant.
-Follow rules strictly.
-Use provided knowledge only as reference.
-Do not take actions unless explicitly asked.
-`;
+    const result = await model.generateContent(message);
+    const response = result.response.text();
 
-    const result = await model.generateContent([
-      systemPrompt,
-      userMessage,
-    ]);
-
-    const text = result.response.text();
-
-    return NextResponse.json({ reply: text });
+    return NextResponse.json({ reply: response });
   } catch (error) {
-    console.error(error);
     return NextResponse.json(
-      { error: "Something went wrong" },
+      { error: "Internal Server Error" },
       { status: 500 }
     );
   }
