@@ -20,8 +20,8 @@ export async function POST(req: Request) {
       );
     }
 
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${apiKey}`,
       {
         method: "POST",
         headers: {
@@ -34,14 +34,15 @@ export async function POST(req: Request) {
               parts: [{ text: userMessage }],
             },
           ],
+          generationConfig: {
+            temperature: 0.7,
+            maxOutputTokens: 500,
+          },
         }),
       }
     );
 
-    const data = await res.json();
-
-    // DEBUG LOG (VERY IMPORTANT)
-    console.log("GEMINI RAW RESPONSE:", JSON.stringify(data, null, 2));
+    const data = await response.json();
 
     const reply =
       data?.candidates?.[0]?.content?.parts?.[0]?.text;
@@ -54,7 +55,6 @@ export async function POST(req: Request) {
     }
 
     return NextResponse.json({ reply });
-
   } catch (error: any) {
     console.error("SERVER ERROR:", error);
     return NextResponse.json(
