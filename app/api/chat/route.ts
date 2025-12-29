@@ -1,48 +1,38 @@
 import { NextResponse } from "next/server";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 export async function POST(req) {
   try {
     const body = await req.json();
-    
-    // 'message' is the new text, 'history' is an array of previous chats
-    const { message, history = [] } = body;
+    const userMessage = body.message || body.prompt;
 
-    if (!message) {
+    if (!userMessage) {
       return NextResponse.json({ error: "No message provided" }, { status: 400 });
     }
 
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
-      return NextResponse.json({ error: "API Key missing" }, { status: 500 });
+      return NextResponse.json({ error: "API Key missing in Vercel settings" }, { status: 500 });
     }
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+    // Initialize the official Google SDK
+    const genAI = new GoogleGenerativeAI(apiKey);
+    
+    // Using the 2.5 model you saw in the docs
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
-    // Format the history for Gemini (alternating 'user' and 'model' roles)
-    const contents = [
-      ...history,
-      { role: "user", parts: [{ text: message }] }
-    ];
+    const result = await model.generateContent(userMessage);
+    const response = await result.response;
+    const text = response.text();
 
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ contents })
-    });
+    return NextResponse.json({ reply: text });
 
-    const data = await response.json();
-
-    if (!response.ok) {
-      return NextResponse.json({ error: data.error?.message || "Gemini Error" }, { status: response.status });
-    }
-
-    const reply = data.candidates?.[0]?.content?.parts?.[0]?.text || "No response";
-
-    return NextResponse.json({ reply });
-
-  } catch (err) {
-    console.error(err);
-    return NextResponse.json({ error: "Server crashed: " + err.message }, { status: 500 });
+  } catch (error) {
+    console.error("Gemini Error:", error);
+    return NextResponse.json({ 
+      error: "Google API rejected the request", 
+      details: error.message 
+    }, { status: 500 });
   }
 }
 
