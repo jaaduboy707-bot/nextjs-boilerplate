@@ -21,7 +21,7 @@ export async function POST(req: Request) {
     }
 
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
       {
         method: "POST",
         headers: {
@@ -40,15 +40,13 @@ export async function POST(req: Request) {
 
     const data = await response.json();
 
-    //  Safety / blocked prompt handling
-    if (data?.promptFeedback?.blockReason) {
+    if (data?.error) {
       return NextResponse.json({
-        reply: "Prompt blocked by Gemini safety filters.",
-        reason: data.promptFeedback.blockReason,
+        reply: "Gemini API error",
+        error: data.error,
       });
     }
 
-    //  Robust text extraction
     const reply =
       data?.candidates?.[0]?.content?.parts
         ?.map((p: any) => p.text)
@@ -63,10 +61,9 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ reply });
   } catch (error: any) {
-    console.error("SERVER ERROR:", error);
     return NextResponse.json(
       { error: "Internal Server Error", detail: error.message },
       { status: 500 }
     );
   }
-        }
+}
