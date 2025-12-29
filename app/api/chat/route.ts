@@ -21,12 +21,10 @@ export async function POST(req: Request) {
     }
 
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.0-pro:generateContent?key=${apiKey}`,
       {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           contents: [
             {
@@ -41,10 +39,7 @@ export async function POST(req: Request) {
     const data = await response.json();
 
     if (data?.error) {
-      return NextResponse.json({
-        reply: "Gemini API error",
-        error: data.error,
-      });
+      return NextResponse.json({ error: data.error }, { status: 500 });
     }
 
     const reply =
@@ -54,15 +49,15 @@ export async function POST(req: Request) {
 
     if (!reply) {
       return NextResponse.json({
-        reply: "Gemini responded but returned no text.",
+        reply: "No text returned",
         debug: data,
       });
     }
 
     return NextResponse.json({ reply });
-  } catch (error: any) {
+  } catch (err: any) {
     return NextResponse.json(
-      { error: "Internal Server Error", detail: error.message },
+      { error: "Server error", detail: err.message },
       { status: 500 }
     );
   }
