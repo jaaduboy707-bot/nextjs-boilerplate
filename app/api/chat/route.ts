@@ -19,8 +19,9 @@ export async function POST(req: Request) {
       );
     }
 
+    // Use Gemini 2.0 Flash (free-tier friendly)
     const response = await fetch(
-      "https://generativelanguage.googleapis.com/v1/models/gemini-2.5-pro:generateContent",
+      "https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent",
       {
         method: "POST",
         headers: {
@@ -44,6 +45,14 @@ export async function POST(req: Request) {
 
     const data = await response.json();
 
+    // Check for errors returned by Gemini
+    if (!response.ok) {
+      return NextResponse.json({
+        reply: "Gemini API error",
+        debug: data,
+      }, { status: response.status });
+    }
+
     const reply =
       data?.candidates?.[0]?.content?.parts
         ?.map((p: any) => p.text)
@@ -57,6 +66,7 @@ export async function POST(req: Request) {
     }
 
     return NextResponse.json({ reply });
+
   } catch (error: any) {
     console.error("SERVER ERROR:", error);
     return NextResponse.json(
@@ -64,4 +74,4 @@ export async function POST(req: Request) {
       { status: 500 }
     );
   }
-}
+        }
