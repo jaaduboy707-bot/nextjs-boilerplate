@@ -2,10 +2,9 @@ import { NextResponse } from "next/server";
 
 export async function POST(req: Request) {
   try {
-    const body = await req.json();
-    const userMessage = body?.message;
+    const { message } = await req.json();
 
-    if (!userMessage) {
+    if (!message) {
       return NextResponse.json(
         { error: "No message provided" },
         { status: 400 }
@@ -21,33 +20,23 @@ export async function POST(req: Request) {
     }
 
     const response = await fetch(
-      "https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent",
+      "https://generativelanguage.googleapis.com/v1/models/gemini-2.5-pro:generateContent",
       {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-goog-api-key": apiKey,
+          "x-goog-api-key": AIzaSyCnUmF3ucnqlPKU5tMchxQu6HG3RA_d2ck,
         },
         body: JSON.stringify({
           contents: [
             {
               role: "user",
-              parts: [
-                {
-                  text:
-                    "Answer clearly, accurately, and concisely.\n" +
-                    "Use a professional, neutral tone.\n" +
-                    "If information is uncertain, say so briefly.\n\n" +
-                    "User message:\n" +
-                    userMessage,
-                },
-              ],
+              parts: [{ text: message }],
             },
           ],
           generationConfig: {
-            temperature: 0.4,
+            temperature: 0.3,
             maxOutputTokens: 512,
-            topP: 0.9,
           },
         }),
       }
@@ -75,4 +64,4 @@ export async function POST(req: Request) {
       { status: 500 }
     );
   }
-                }
+            }
