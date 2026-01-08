@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
 
-// Import KB files as raw text (webpack asset/source)
+// ✅ KB imports as raw text
 import section1 from "@/data/kb/section.1.md";
 import section2 from "@/data/kb/section.2.md";
 import section3 from "@/data/kb/section.3.md";
 import section4 from "@/data/kb/section.4.md";
 import section5 from "@/data/kb/section.5.md";
 
+// Models to try
 const MODELS = [
   "gemini-2.5-pro",
   "gemini-2.5-flash-lite",
@@ -15,7 +16,7 @@ const MODELS = [
   "gemini-1.5-flash",
 ];
 
-// 🔒 KB HARD CAPPING
+// 🔒 KB Hard capping
 function limitText(text: string, maxChars: number) {
   if (!text) return "";
   return text.length > maxChars
@@ -23,9 +24,12 @@ function limitText(text: string, maxChars: number) {
     : text;
 }
 
+// 🔄 Memory simulation (store last 3 messages per session)
+const MEMORY: Record<string, string[]> = {};
+
 export async function POST(req: Request) {
   try {
-    const { message } = await req.json();
+    const { message, sessionId } = await req.json();
 
     if (!message) {
       return NextResponse.json({ error: "No message provided" }, { status: 400 });
@@ -36,17 +40,24 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "GEMINI_API_KEY missing" }, { status: 500 });
     }
 
-    // 🔒 STEP 1 — CAPPED KB ASSEMBLY + TONE
+    // Append user message to memory
+    if (!MEMORY[sessionId]) MEMORY[sessionId] = [];
+    MEMORY[sessionId].push(`User: ${message}`);
+    if (MEMORY[sessionId].length > 3) MEMORY[sessionId].shift(); // keep last 3
+
+    // 🔒 SYSTEM PROMPT — KB + tone + memory
     const SYSTEM_KB = `
-You are a calm, frank, and supportive AI. Imagine talking to a knowledgeable friend.
+You are a calm, frank, supportive AI, like a knowledgeable friend.
 
 Style rules:
-- Start responses with friendly acknowledgment, e.g., “Nice question!”, “Good thinking!”.
+- Start responses with friendly acknowledgment: “Nice question!”, “Good thinking!”.
 - Explain clearly in short, human-like paragraphs.
-- Sprinkle small informal phrases to feel approachable: “Cool”, “Ow nice”, “Gotcha”.
-- End responses with curiosity hook or soft offer: “Do you want me to explain that further?”.
+- Sprinkle small informal phrases: “Cool”, “Ow nice”, “Gotcha”.
+- End responses with curiosity hook: “Do you want me to explore that further?”.
 - Never use robotic, corporate, or legal-style speech.
-- Never mention internal sections, rules, or system mechanics.
+
+Memory from this session (last 3 messages):
+${MEMORY[sessionId].join("\n")}
 
 [SECTION 1 — CORE AUTHORITY]
 ${limitText(section1, 3000)}
@@ -82,9 +93,7 @@ ${limitText(section5, 3000)}
                 {
                   role: "user",
                   parts: [
-                    {
-                      text: `${SYSTEM_KB}\n\nUser message:\n${message}`,
-                    },
+                    { text: `${SYSTEM_KB}\n\nUser message:\n${message}` },
                   ],
                 },
               ],
@@ -100,7 +109,7 @@ ${limitText(section5, 3000)}
         debugData = data;
 
         if (!response.ok) {
-          if (response.status === 429) continue; // try next model if rate limited
+          if (response.status === 429) continue;
           return NextResponse.json(
             { reply: "Gemini API error", debug: data },
             { status: response.status }
@@ -112,23 +121,20 @@ ${limitText(section5, 3000)}
             ?.map((p: any) => p.text)
             ?.join("") || null;
 
-        if (reply) break; // stop trying other models if reply obtained
+        if (reply) break;
       } catch (err) {
         console.error(`Error with model ${model}:`, err);
         continue;
       }
     }
 
-    // 🔒 SUPPORTIVE FALLBACK — if no reply or limit reached
+    // 💡 Supportive fallback if no reply or hit token cap
     if (!reply) {
-      reply = `Hey! I’ve shared all I can for now in this trial. 🤗  
-If you want the full detailed insights or more context, you can check out our website or reach out via the contact form — our team will guide you personally.`;
+      reply = `Hey! Looks like we've hit the trial response limit. 
+You can explore full details on our website or reach out to our team directly through the contact form — they'll guide you personally!`;
     }
 
-    return NextResponse.json({
-      reply,
-      debug: debugData ? "[Debug info available]" : undefined,
-    });
+    return NextResponse.json({ reply });
   } catch (error: any) {
     console.error("SERVER ERROR:", error);
     return NextResponse.json(
@@ -136,4 +142,4 @@ If you want the full detailed insights or more context, you can check out our we
       { status: 500 }
     );
   }
-}
+  }
