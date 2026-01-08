@@ -1,13 +1,14 @@
 import { NextResponse } from "next/server";
 
-// ✅ KB imports as raw text
+// KB imports as raw text
 import section1 from "@/data/kb/section.1.md";
 import section2 from "@/data/kb/section.2.md";
 import section3 from "@/data/kb/section.3.md";
 import section4 from "@/data/kb/section.4.md";
 import section5 from "@/data/kb/section.5.md";
 
-// Models to try
+import { SYSTEM_PROMPT } from "@/app/ai/systemPrompt";
+
 const MODELS = [
   "gemini-2.5-pro",
   "gemini-2.5-flash-lite",
@@ -16,7 +17,7 @@ const MODELS = [
   "gemini-1.5-flash",
 ];
 
-// 🔒 KB Hard capping
+// 🔒 KB HARD CAPPING
 function limitText(text: string, maxChars: number) {
   if (!text) return "";
   return text.length > maxChars
@@ -24,12 +25,12 @@ function limitText(text: string, maxChars: number) {
     : text;
 }
 
-// 🔄 Memory simulation (store last 3 messages per session)
-const MEMORY: Record<string, string[]> = {};
+// Memory simulation: previous messages
+let memory: string[] = [];
 
 export async function POST(req: Request) {
   try {
-    const { message, sessionId } = await req.json();
+    const { message } = await req.json();
 
     if (!message) {
       return NextResponse.json({ error: "No message provided" }, { status: 400 });
@@ -40,24 +41,9 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "GEMINI_API_KEY missing" }, { status: 500 });
     }
 
-    // Append user message to memory
-    if (!MEMORY[sessionId]) MEMORY[sessionId] = [];
-    MEMORY[sessionId].push(`User: ${message}`);
-    if (MEMORY[sessionId].length > 3) MEMORY[sessionId].shift(); // keep last 3
-
-    // 🔒 SYSTEM PROMPT — KB + tone + memory
+    // Combine system prompt + KB + memory + current message
     const SYSTEM_KB = `
-You are a calm, frank, supportive AI, like a knowledgeable friend.
-
-Style rules:
-- Start responses with friendly acknowledgment: “Nice question!”, “Good thinking!”.
-- Explain clearly in short, human-like paragraphs.
-- Sprinkle small informal phrases: “Cool”, “Ow nice”, “Gotcha”.
-- End responses with curiosity hook: “Do you want me to explore that further?”.
-- Never use robotic, corporate, or legal-style speech.
-
-Memory from this session (last 3 messages):
-${MEMORY[sessionId].join("\n")}
+${SYSTEM_PROMPT}
 
 [SECTION 1 — CORE AUTHORITY]
 ${limitText(section1, 3000)}
@@ -74,6 +60,9 @@ ${limitText(section4, 1500)}
 [SECTION 5 — EFFIC CONTEXT / TRUTH ANCHOR]
 ${limitText(section5, 3000)}
 `;
+
+    // Append memory if exists
+    const MEMORY_TEXT = memory.length ? `\n\n[MEMORY]\n${memory.join("\n\n")}` : "";
 
     let reply: string | null = null;
     let debugData: any = null;
@@ -93,7 +82,9 @@ ${limitText(section5, 3000)}
                 {
                   role: "user",
                   parts: [
-                    { text: `${SYSTEM_KB}\n\nUser message:\n${message}` },
+                    {
+                      text: `${SYSTEM_KB}${MEMORY_TEXT}\n\nUser message:\n${message}`,
+                    },
                   ],
                 },
               ],
@@ -128,10 +119,12 @@ ${limitText(section5, 3000)}
       }
     }
 
-    // 💡 Supportive fallback if no reply or hit token cap
+    // Save to memory for future requests (simulate session)
+    if (reply) memory.push(`User: ${message}\nAI: ${reply}`);
+
+    // Supportive fallback if limit is reached or no reply
     if (!reply) {
-      reply = `Hey! Looks like we've hit the trial response limit. 
-You can explore full details on our website or reach out to our team directly through the contact form — they'll guide you personally!`;
+      reply = "Hey! Looks like we reached the trial limit for now. You can explore more info on our website or chat with our team directly!";
     }
 
     return NextResponse.json({ reply });
@@ -142,4 +135,4 @@ You can explore full details on our website or reach out to our team directly th
       { status: 500 }
     );
   }
-  }
+          }
