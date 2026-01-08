@@ -1,14 +1,14 @@
 import { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  experimental: {
-    appDir: true,
-  },
-  webpack: (config, { isServer }) => {
-    // This allows .md files to be imported as strings
+  // ---------------------------
+  // Webpack customization
+  // ---------------------------
+  webpack: (config) => {
+    // Allow importing .md files as raw strings
     config.module.rules.push({
       test: /\.md$/i,
-      type: "asset/source",
+      type: "asset/source", // modern replacement for raw-loader
     });
 
     return config;
