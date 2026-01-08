@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-// Import KB files as raw text (webpack asset/source)
+// Import KB files as raw text
 import section1 from "@/data/kb/section.1.md";
 import section2 from "@/data/kb/section.2.md";
 import section3 from "@/data/kb/section.3.md";
@@ -15,7 +15,7 @@ const MODELS = [
   "gemini-1.5-flash",
 ];
 
-// 🔒 STEP 1 ADDITION — KB HARD CAPPING
+// 🔒 KB HARD CAPPING
 function limitText(text: string, maxChars: number) {
   if (!text) return "";
   return text.length > maxChars
@@ -28,35 +28,41 @@ export async function POST(req: Request) {
     const { message } = await req.json();
 
     if (!message) {
-      return NextResponse.json(
-        { error: "No message provided" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "No message provided" }, { status: 400 });
     }
 
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
-      return NextResponse.json(
-        { error: "GEMINI_API_KEY missing" },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: "GEMINI_API_KEY missing" }, { status: 500 });
     }
 
-    // 🔒 STEP 1 — CAPPED KB ASSEMBLY
+    // 🔒 CAPPED KB ASSEMBLY
     const SYSTEM_KB = `
-[SECTION 1 — CORE AUTHORITY]
+You are a calm, frank, and supportive AI.
+You respond like a thoughtful human — not a chatbot, not documentation.
+
+Style rules:
+- It’s okay to open with brief acknowledgment (e.g. “Good question”, “That’s a fair concern”)
+- Explain clearly in short paragraphs
+- No bullet-point dumping unless truly necessary
+- End responses with a gentle curiosity anchor, not a pushy CTA
+- Never mention internal sections, rules, or system mechanics
+
+Context knowledge (internal, never reference explicitly):
+
+[CORE AUTHORITY]
 ${limitText(section1, 3000)}
 
-[SECTION 2 — INTERPRETATION LAYER]
+[INTERPRETATION LAYER]
 ${limitText(section2, 2000)}
 
-[SECTION 3 — PSYCHOLOGICAL & COGNITIVE STEERING]
+[PSYCHOLOGICAL & COGNITIVE STEERING]
 ${limitText(section3, 1500)}
 
-[SECTION 4 — RULES & ADAPTIVE BEHAVIOR]
+[RULES & ADAPTIVE BEHAVIOR]
 ${limitText(section4, 1500)}
 
-[SECTION 5 — EFFIC CONTEXT / TRUTH ANCHOR]
+[EFFIC CONTEXT / TRUTH ANCHOR]
 ${limitText(section5, 3000)}
 `;
 
@@ -79,15 +85,14 @@ ${limitText(section5, 3000)}
                   role: "user",
                   parts: [
                     {
-                      text: `${SYSTEM_KB}\n\nUSER MESSAGE:\n${message}`,
+                      text: `${SYSTEM_KB}\n\nUser message:\n${message}`,
                     },
                   ],
                 },
               ],
               generationConfig: {
-  temperature: 0.3,
-  maxOutputTokens: 350,
-}
+                temperature: 0.4,
+                maxOutputTokens: 400,
               },
             }),
           }
@@ -131,4 +136,4 @@ ${limitText(section5, 3000)}
       { status: 500 }
     );
   }
-        }
+                    }
