@@ -5,10 +5,10 @@ const nextConfig: NextConfig = {
     appDir: true,
   },
   webpack: (config) => {
-    // Add raw-loader for .md files
+    // Modern way to handle .md files
     config.module.rules.push({
       test: /\.md$/i,
-      use: "raw-loader",
+      type: 'asset/source', // built-in, no raw-loader needed
     });
 
     return config;
