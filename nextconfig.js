@@ -1,17 +1,16 @@
-// next.config.ts
-import type { NextConfig } from "next";
-import type { Configuration } from "webpack";
+import { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  reactStrictMode: true,
+  experimental: {
+    appDir: true,
+  },
+  webpack: (config) => {
+    // Add raw-loader for .md files
+    config.module.rules.push({
+      test: /\.md$/i,
+      use: "raw-loader",
+    });
 
-  webpack: (config: Configuration) => {
-    if (config.module?.rules) {
-      config.module.rules.push({
-        test: /\.md$/,
-        type: "asset/source", // import markdown as raw string
-      });
-    }
     return config;
   },
 };
