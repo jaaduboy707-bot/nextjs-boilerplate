@@ -1,14 +1,13 @@
 import { NextResponse } from "next/server";
 
-// KB imports as raw text
+// Import KB files as raw text
 import section1 from "@/data/kb/section.1.md";
 import section2 from "@/data/kb/section.2.md";
 import section3 from "@/data/kb/section.3.md";
 import section4 from "@/data/kb/section.4.md";
 import section5 from "@/data/kb/section.5.md";
 
-import { SYSTEM_PROMPT } from "@/app/ai/systemPrompt";
-
+// Models priority
 const MODELS = [
   "gemini-2.5-pro",
   "gemini-2.5-flash-lite",
@@ -17,7 +16,9 @@ const MODELS = [
   "gemini-1.5-flash",
 ];
 
-// 🔒 KB HARD CAPPING
+// ---------------------------
+// KB HARD CAPPING FUNCTION
+// ---------------------------
 function limitText(text: string, maxChars: number) {
   if (!text) return "";
   return text.length > maxChars
@@ -25,15 +26,26 @@ function limitText(text: string, maxChars: number) {
     : text;
 }
 
-// Memory simulation: previous messages
-let memory: string[] = [];
+// ---------------------------
+// MEMORY SIMULATION STORAGE
+// ---------------------------
+// For demo purposes, a simple in-memory object per session.
+// In production, replace with Redis, DB, or persistent store.
+const sessionMemory: Record<string, string[]> = {};
 
+// ---------------------------
+// POST ROUTE
+// ---------------------------
 export async function POST(req: Request) {
   try {
-    const { message } = await req.json();
+    const { message, sessionId } = await req.json();
 
     if (!message) {
       return NextResponse.json({ error: "No message provided" }, { status: 400 });
+    }
+
+    if (!sessionId) {
+      return NextResponse.json({ error: "Session ID required for memory" }, { status: 400 });
     }
 
     const apiKey = process.env.GEMINI_API_KEY;
@@ -41,9 +53,19 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "GEMINI_API_KEY missing" }, { status: 500 });
     }
 
-    // Combine system prompt + KB + memory + current message
+    // ---------------------------
+    // CAPPED KB ASSEMBLY
+    // ---------------------------
     const SYSTEM_KB = `
-${SYSTEM_PROMPT}
+You are a calm, frank, and supportive AI. Imagine talking to a knowledgeable friend.
+
+Style rules:
+- Start responses with friendly acknowledgment, e.g., “Nice question!”, “Good thinking!”.
+- Explain clearly in short, human-like paragraphs.
+- Sprinkle small informal phrases to feel approachable: “Cool”, “Ow nice”, “Gotcha”.
+- End responses with curiosity hook or soft offer: “Do you want me to explain that further?”.
+- Never use robotic, corporate, or legal-style speech.
+- Never mention internal sections, rules, or system mechanics.
 
 [SECTION 1 — CORE AUTHORITY]
 ${limitText(section1, 3000)}
@@ -61,8 +83,18 @@ ${limitText(section4, 1500)}
 ${limitText(section5, 3000)}
 `;
 
-    // Append memory if exists
-    const MEMORY_TEXT = memory.length ? `\n\n[MEMORY]\n${memory.join("\n\n")}` : "";
+    // ---------------------------
+    // Memory simulation: previous messages
+    // ---------------------------
+    const pastMessages = sessionMemory[sessionId] || [];
+    const memoryText = pastMessages.length
+      ? "\n\nPREVIOUS CONVERSATION:\n" + pastMessages.join("\n")
+      : "";
+
+    // ---------------------------
+    // Prepare final prompt for Gemini
+    // ---------------------------
+    const finalPrompt = `${SYSTEM_KB}\n\nUser message:\n${message}${memoryText}`;
 
     let reply: string | null = null;
     let debugData: any = null;
@@ -81,16 +113,12 @@ ${limitText(section5, 3000)}
               contents: [
                 {
                   role: "user",
-                  parts: [
-                    {
-                      text: `${SYSTEM_KB}${MEMORY_TEXT}\n\nUser message:\n${message}`,
-                    },
-                  ],
+                  parts: [{ text: finalPrompt }],
                 },
               ],
               generationConfig: {
                 temperature: 0.4,
-                maxOutputTokens: 400,
+                maxOutputTokens: 450,
               },
             }),
           }
@@ -119,12 +147,19 @@ ${limitText(section5, 3000)}
       }
     }
 
-    // Save to memory for future requests (simulate session)
-    if (reply) memory.push(`User: ${message}\nAI: ${reply}`);
+    // ---------------------------
+    // Update session memory
+    // ---------------------------
+    if (!sessionMemory[sessionId]) sessionMemory[sessionId] = [];
+    sessionMemory[sessionId].push(`User: ${message}`);
+    if (reply) sessionMemory[sessionId].push(`AI: ${reply}`);
 
-    // Supportive fallback if limit is reached or no reply
+    // ---------------------------
+    // Fallback if no reply
+    // ---------------------------
     if (!reply) {
-      reply = "Hey! Looks like we reached the trial limit for now. You can explore more info on our website or chat with our team directly!";
+      reply =
+        "Hey! Looks like we've reached the trial limit for this conversation. You can explore more on our website or reach out to our team directly to get detailed guidance. ✨";
     }
 
     return NextResponse.json({ reply });
@@ -135,4 +170,4 @@ ${limitText(section5, 3000)}
       { status: 500 }
     );
   }
-          }
+}
