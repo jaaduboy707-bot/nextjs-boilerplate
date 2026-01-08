@@ -29,29 +29,37 @@ function limitText(text: string, maxChars: number) {
 const sessionMemory: Record<string, string[]> = {};
 
 // ---------------------------
+// MOCK FUNCTION TO EXTRACT EMAIL + TIME
+// ---------------------------
+// Replace with smarter AI-parsed logic later
+function parseCalendlyRequest(message: string) {
+  // Example: extract "email: abc@example.com" and "time: 2026-01-10T14:00:00"
+  const emailMatch = message.match(/[\w._%+-]+@[\w.-]+\.[a-zA-Z]{2,}/);
+  const timeMatch = message.match(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/);
+  if (!emailMatch || !timeMatch) return null;
+  return { clientEmail: emailMatch[0], preferredTime: timeMatch[0] };
+}
+
+// ---------------------------
 // POST ROUTE
 // ---------------------------
 export async function POST(req: Request) {
   try {
     const { message, sessionId } = await req.json();
 
-    if (!message) {
-      return NextResponse.json({ error: "No message provided" }, { status: 400 });
-    }
-    if (!sessionId) {
-      return NextResponse.json({ error: "Session ID required for memory" }, { status: 400 });
-    }
+    if (!message) return NextResponse.json({ error: "No message provided" }, { status: 400 });
+    if (!sessionId) return NextResponse.json({ error: "Session ID required for memory" }, { status: 400 });
 
     const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      return NextResponse.json({ error: "GEMINI_API_KEY missing" }, { status: 500 });
-    }
+    if (!apiKey) return NextResponse.json({ error: "GEMINI_API_KEY missing" }, { status: 500 });
+
+    const calendlyKey = process.env.CALENDLY_API_TOKEN;
+    if (!calendlyKey) return NextResponse.json({ error: "Calendly API key missing" }, { status: 500 });
 
     // ---------------------------
     // READ KB FILES AT RUNTIME
     // ---------------------------
     const kbDir = path.join(process.cwd(), "data/kb");
-
     const [section1, section2, section3, section4, section5] = await Promise.all([
       readFile(path.join(kbDir, "section.1.md"), "utf-8"),
       readFile(path.join(kbDir, "section.2.md"), "utf-8"),
@@ -88,39 +96,30 @@ ${limitText(section5, 3000)}
 `;
 
     // ---------------------------
-    // Memory simulation
+    // MEMORY SIMULATION
     // ---------------------------
-    const pastMessages = sessionMemory[sessionId] || [];
-    const memoryText = pastMessages.length
-      ? "\n\nPREVIOUS CONVERSATION:\n" + pastMessages.join("\n")
-      : "";
+    if (!sessionMemory[sessionId]) sessionMemory[sessionId] = [];
+    const pastMessages = sessionMemory[sessionId];
+    const memoryText = pastMessages.length ? "\n\nPREVIOUS CONVERSATION:\n" + pastMessages.join("\n") : "";
 
     const finalPrompt = `${SYSTEM_KB}\n\nUser message:\n${message}${memoryText}`;
 
     let reply: string | null = null;
     let debugData: any = null;
 
+    // ---------------------------
+    // CALL GEMINI AI
+    // ---------------------------
     for (const model of MODELS) {
       try {
         const response = await fetch(
           `https://generativelanguage.googleapis.com/v1/models/${model}:generateContent`,
           {
             method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "x-goog-api-key": apiKey,
-            },
+            headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
             body: JSON.stringify({
-              contents: [
-                {
-                  role: "user",
-                  parts: [{ text: finalPrompt }],
-                },
-              ],
-              generationConfig: {
-                temperature: 0.4,
-                maxOutputTokens: 450,
-              },
+              contents: [{ role: "user", parts: [{ text: finalPrompt }] }],
+              generationConfig: { temperature: 0.4, maxOutputTokens: 450 },
             }),
           }
         );
@@ -130,17 +129,10 @@ ${limitText(section5, 3000)}
 
         if (!response.ok) {
           if (response.status === 429) continue;
-          return NextResponse.json(
-            { reply: "Gemini API error", debug: data },
-            { status: response.status }
-          );
+          return NextResponse.json({ reply: "Gemini API error", debug: data }, { status: response.status });
         }
 
-        reply =
-          data?.candidates?.[0]?.content?.parts
-            ?.map((p: any) => p.text)
-            ?.join("") || null;
-
+        reply = data?.candidates?.[0]?.content?.parts?.map((p: any) => p.text)?.join("") || null;
         if (reply) break;
       } catch (err) {
         console.error(`Error with model ${model}:`, err);
@@ -149,26 +141,52 @@ ${limitText(section5, 3000)}
     }
 
     // ---------------------------
-    // Update session memory
+    // CALENDLY SCHEDULING
     // ---------------------------
-    if (!sessionMemory[sessionId]) sessionMemory[sessionId] = [];
+    const calendlyData = parseCalendlyRequest(message);
+    if (calendlyData) {
+      const { clientEmail, preferredTime } = calendlyData;
+      try {
+        const calendlyRes = await fetch("https://api.calendly.com/scheduled_events", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${calendlyKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            invitee: { email: clientEmail },
+            event: { start_time: preferredTime, duration: 30 },
+          }),
+        });
+        const calendlyResp = await calendlyRes.json();
+        if (calendlyRes.ok) {
+          reply += `\n\n✅ Scheduled successfully for ${preferredTime}. Check your email for confirmation.`;
+          sessionMemory[sessionId].push(`Scheduled via Calendly: ${clientEmail} at ${preferredTime}`);
+        } else {
+          reply += `\n\n⚠️ Could not schedule: ${calendlyResp.message || "Unknown error"}`;
+        }
+      } catch (err) {
+        console.error("Calendly API error:", err);
+        reply += `\n\n⚠️ Error while scheduling the meeting.`;
+      }
+    }
+
+    // ---------------------------
+    // UPDATE SESSION MEMORY
+    // ---------------------------
     sessionMemory[sessionId].push(`User: ${message}`);
     if (reply) sessionMemory[sessionId].push(`AI: ${reply}`);
 
     // ---------------------------
-    // Fallback
+    // FALLBACK
     // ---------------------------
     if (!reply) {
-      reply =
-        "Hey! Looks like we've reached the trial limit for this conversation. You can explore more on our website or reach out to our team directly to get detailed guidance. ✨";
+      reply = "Hey! Looks like we've reached the trial limit for this conversation. You can explore more on our website or reach out to our team directly to get detailed guidance. ✨";
     }
 
     return NextResponse.json({ reply });
   } catch (error: any) {
     console.error("SERVER ERROR:", error);
-    return NextResponse.json(
-      { error: "Internal Server Error", detail: error.message },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Internal Server Error", detail: error.message }, { status: 500 });
   }
-        }
+    }
