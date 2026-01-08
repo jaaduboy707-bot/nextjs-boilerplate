@@ -12,7 +12,9 @@
     "next": "14.2.5",
     "react": "18.3.1",
     "react-dom": "18.3.1",
-    "@google/generative-ai": "0.21.0"
+    "@google/generative-ai": "0.21.0",
+    "@upstash/redis": "^2.4.0",
+    "calendly": "^1.0.0"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
