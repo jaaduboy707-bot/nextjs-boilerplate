@@ -1,14 +1,6 @@
 import { NextResponse } from "next/server";
-
-// 🔹 System prompt
-import { SYSTEM_PROMPT } from "@/app/ai/systemPrompt";
-
-// 🔹 Knowledge Base (raw markdown, bundled by webpack)
-import section1 from "@/data/kb/section.1.md";
-import section2 from "@/data/kb/section.2.md";
-import section3 from "@/data/kb/section.3.md";
-import section4 from "@/data/kb/section.4.md";
-import section5 from "@/data/kb/section.5.md";
+import fs from "fs";
+import path from "path";
 
 const MODELS = [
   "gemini-2.5-pro",
@@ -18,37 +10,43 @@ const MODELS = [
   "gemini-1.5-flash"
 ];
 
+/**
+ * Loads all KB markdown files as raw text.
+ * Server-only, Vercel-safe, App Router compliant.
+ */
+function loadKnowledgeBase() {
+  const kbPath = path.join(process.cwd(), "data", "kb");
+
+  const files = [
+    "section.1.md",
+    "section.2.md",
+    "section.3.md",
+    "section.4.md",
+    "section.5.md",
+  ];
+
+  return files
+    .map((file) =>
+      fs.readFileSync(path.join(kbPath, file), "utf-8")
+    )
+    .join("\n\n");
+}
+
 export async function POST(req: Request) {
   try {
     const { message } = await req.json();
 
     if (!message) {
-      return NextResponse.json(
-        { error: "No message provided" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "No message provided" }, { status: 400 });
     }
 
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
-      return NextResponse.json(
-        { error: "GEMINI_API_KEY missing" },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: "GEMINI_API_KEY missing" }, { status: 500 });
     }
 
-    // 🔹 Combine full knowledge base (silent, internal)
-    const KNOWLEDGE_BASE = `
-${section1}
-
-${section2}
-
-${section3}
-
-${section4}
-
-${section5}
-`;
+    // ✅ Load KB at runtime
+    const KNOWLEDGE_BASE = loadKnowledgeBase();
 
     let reply: string | null = null;
     let debugData: any = null;
@@ -69,15 +67,7 @@ ${section5}
                   role: "user",
                   parts: [
                     {
-                      text: `
-${SYSTEM_PROMPT}
-
---- INTERNAL KNOWLEDGE BASE (SILENT) ---
-${KNOWLEDGE_BASE}
-
---- USER MESSAGE ---
-${message}
-                      `,
+                      text: `${KNOWLEDGE_BASE}\n\nUSER MESSAGE:\n${message}`,
                     },
                   ],
                 },
@@ -128,4 +118,4 @@ ${message}
       { status: 500 }
     );
   }
-    }
+          }
