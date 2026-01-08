@@ -53,18 +53,36 @@ export async function POST(req: Request) {
     const { message, sessionId } = body;
 
     if (!message || !sessionId) {
-      return NextResponse.json({
-        reply:
-          "I didn’t fully receive that. Could you rephrase or send your message again?",
-      });
+      return NextResponse.json(
+        {
+          reply:
+            "I didn’t fully receive that. Could you rephrase or send your message again?",
+        },
+        {
+          headers: {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type",
+          },
+        }
+      );
     }
 
     const geminiKey = process.env.GEMINI_API_KEY;
     if (!geminiKey) {
-      return NextResponse.json({
-        reply:
-          "I'm temporarily unavailable due to a configuration issue. Please try again shortly.",
-      });
+      return NextResponse.json(
+        {
+          reply:
+            "I'm temporarily unavailable due to a configuration issue. Please try again shortly.",
+        },
+        {
+          headers: {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type",
+          },
+        }
+      );
     }
 
     // ---------------------------
@@ -108,7 +126,7 @@ ${limitText(s5, 3000)}
 `;
 
     // ---------------------------
-    // MEMORY
+    // MEMORY INIT
     // ---------------------------
     if (!sessionMemory[sessionId]) sessionMemory[sessionId] = [];
     const history = sessionMemory[sessionId].slice(-6).join("\n");
@@ -156,7 +174,10 @@ ${message}
             ?.map((p: any) => p.text)
             ?.join("") || null;
 
-        if (reply) break;
+        if (reply) {
+          reply = limitText(reply, 1000); // safety limit
+          break;
+        }
       } catch {
         continue;
       }
@@ -173,8 +194,8 @@ ${message}
         createdAt: new Date().toISOString(),
       });
 
-      reply +=
-        "\n\nI’ve noted your email and preferred time. I’ll confirm availability and follow up shortly.";
+      const bookingReply = `I’ve noted your email (${bookingIntent.email}) and preferred time (${bookingIntent.time}). I’ll confirm availability and follow up shortly.`;
+      reply = reply ? `${reply}\n\n${bookingReply}` : bookingReply;
 
       sessionMemory[sessionId].push(
         `Lead saved: ${bookingIntent.email} at ${bookingIntent.time}`
@@ -182,22 +203,45 @@ ${message}
     }
 
     // ---------------------------
-    // UPDATE MEMORY
+    // MEMORY UPDATE (atomic)
     // ---------------------------
-    sessionMemory[sessionId].push(`User: ${message}`);
-    if (reply) sessionMemory[sessionId].push(`AI: ${reply}`);
+    sessionMemory[sessionId].push(`User: ${message}`, `AI: ${reply}`);
 
+    // ---------------------------
+    // FINAL SAFETY NET
+    // ---------------------------
     if (!reply) {
       reply =
         "I’m here and listening. Could you tell me a bit more about what you’re looking to achieve?";
     }
 
-    return NextResponse.json({ reply });
+    // ---------------------------
+    // RETURN RESPONSE WITH CORS
+    // ---------------------------
+    return NextResponse.json(
+      { reply },
+      {
+        headers: {
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Methods": "POST, OPTIONS",
+          "Access-Control-Allow-Headers": "Content-Type",
+        },
+      }
+    );
   } catch (err) {
     console.error("SERVER ERROR:", err);
-    return NextResponse.json({
-      reply:
-        "Something unexpected happened on my side. Please try again in a moment.",
-    });
+    return NextResponse.json(
+      {
+        reply:
+          "Something unexpected happened on my side. Please try again in a moment.",
+      },
+      {
+        headers: {
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Methods": "POST, OPTIONS",
+          "Access-Control-Allow-Headers": "Content-Type",
+        },
+      }
+    );
   }
-}
+                  }
