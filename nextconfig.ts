@@ -1,14 +1,13 @@
-import type { NextConfig } from "next";
-
-const nextConfig: NextConfig = {
+/** @type {import('next').NextConfig} */
+const nextConfig = {
   reactStrictMode: true,
-  webpack(config: any) {
-    config.module?.rules?.push({
+  webpack(config) {
+    config.module.rules.push({
       test: /\.md$/,
-      type: "asset/source",
+      type: "asset/source", // treat .md files as raw text
     });
     return config;
   },
 };
 
-export default nextConfig;
+module.exports = nextConfig;
