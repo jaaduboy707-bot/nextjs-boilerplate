@@ -1,13 +1,10 @@
 import { NextResponse } from "next/server";
+import { readFile } from "fs/promises";
+import path from "path";
 
-// Import KB files as raw text
-import section1 from "@/data/kb/section.1.md";
-import section2 from "@/data/kb/section.2.md";
-import section3 from "@/data/kb/section.3.md";
-import section4 from "@/data/kb/section.4.md";
-import section5 from "@/data/kb/section.5.md";
-
+// ---------------------------
 // Models priority
+// ---------------------------
 const MODELS = [
   "gemini-2.5-pro",
   "gemini-2.5-flash-lite",
@@ -29,8 +26,6 @@ function limitText(text: string, maxChars: number) {
 // ---------------------------
 // MEMORY SIMULATION STORAGE
 // ---------------------------
-// For demo purposes, a simple in-memory object per session.
-// In production, replace with Redis, DB, or persistent store.
 const sessionMemory: Record<string, string[]> = {};
 
 // ---------------------------
@@ -43,7 +38,6 @@ export async function POST(req: Request) {
     if (!message) {
       return NextResponse.json({ error: "No message provided" }, { status: 400 });
     }
-
     if (!sessionId) {
       return NextResponse.json({ error: "Session ID required for memory" }, { status: 400 });
     }
@@ -54,8 +48,18 @@ export async function POST(req: Request) {
     }
 
     // ---------------------------
-    // CAPPED KB ASSEMBLY
+    // READ KB FILES AT RUNTIME
     // ---------------------------
+    const kbDir = path.join(process.cwd(), "data/kb");
+
+    const [section1, section2, section3, section4, section5] = await Promise.all([
+      readFile(path.join(kbDir, "section.1.md"), "utf-8"),
+      readFile(path.join(kbDir, "section.2.md"), "utf-8"),
+      readFile(path.join(kbDir, "section.3.md"), "utf-8"),
+      readFile(path.join(kbDir, "section.4.md"), "utf-8"),
+      readFile(path.join(kbDir, "section.5.md"), "utf-8"),
+    ]);
+
     const SYSTEM_KB = `
 You are a calm, frank, and supportive AI. Imagine talking to a knowledgeable friend.
 
@@ -84,16 +88,13 @@ ${limitText(section5, 3000)}
 `;
 
     // ---------------------------
-    // Memory simulation: previous messages
+    // Memory simulation
     // ---------------------------
     const pastMessages = sessionMemory[sessionId] || [];
     const memoryText = pastMessages.length
       ? "\n\nPREVIOUS CONVERSATION:\n" + pastMessages.join("\n")
       : "";
 
-    // ---------------------------
-    // Prepare final prompt for Gemini
-    // ---------------------------
     const finalPrompt = `${SYSTEM_KB}\n\nUser message:\n${message}${memoryText}`;
 
     let reply: string | null = null;
@@ -155,7 +156,7 @@ ${limitText(section5, 3000)}
     if (reply) sessionMemory[sessionId].push(`AI: ${reply}`);
 
     // ---------------------------
-    // Fallback if no reply
+    // Fallback
     // ---------------------------
     if (!reply) {
       reply =
@@ -170,4 +171,4 @@ ${limitText(section5, 3000)}
       { status: 500 }
     );
   }
-}
+        }
