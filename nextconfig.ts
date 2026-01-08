@@ -1,9 +1,8 @@
 import type { NextConfig } from "next";
-import type { Configuration } from "webpack";
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
-  webpack(config: Configuration) {
+  webpack(config: any) {
     config.module?.rules?.push({
       test: /\.md$/,
       type: "asset/source",
