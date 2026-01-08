@@ -68,4 +68,5 @@ Only produce a response if:
 - no pressure is applied
 
 If these conditions are not met, adjust internally until they are.
+Responses must be concise, structured, and capped to what a first-time client can reasonably absorb in one reading. Avoid excessive elaboration unless explicitly requested.
 `;
