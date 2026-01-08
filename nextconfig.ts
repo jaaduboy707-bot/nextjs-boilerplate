@@ -5,10 +5,10 @@ const nextConfig: NextConfig = {
     appDir: true,
   },
   webpack: (config) => {
-    // Modern way to handle .md files
+    // Modern way to import raw Markdown as string
     config.module.rules.push({
       test: /\.md$/i,
-      type: 'asset/source', // built-in, no raw-loader needed
+      type: "asset/source", // <-- no need to install raw-loader
     });
 
     return config;
