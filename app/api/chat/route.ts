@@ -7,6 +7,7 @@ import section3 from "@/data/kb/section.3.md";
 import section4 from "@/data/kb/section.4.md";
 import section5 from "@/data/kb/section.5.md";
 
+// Available Gemini models
 const MODELS = [
   "gemini-2.5-pro",
   "gemini-2.5-flash-lite",
@@ -23,21 +24,14 @@ function limitText(text: string, maxChars: number) {
     : text;
 }
 
-export async function POST(req: Request) {
-  try {
-    const { message } = await req.json();
+// 🔒 SESSION MEMORY (in-memory store)
+const sessionMemory: Record<string, string[]> = {};
 
-    if (!message) {
-      return NextResponse.json({ error: "No message provided" }, { status: 400 });
-    }
+// Helper to assemble KB + memory for user
+function assembleSystemPrompt(userId: string, message: string) {
+  const memory = sessionMemory[userId]?.join("\n") || "";
 
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      return NextResponse.json({ error: "GEMINI_API_KEY missing" }, { status: 500 });
-    }
-
-    // 🔒 STEP 1 — CAPPED KB ASSEMBLY + TONE
-const SYSTEM_KB = `
+  const SYSTEM_KB = `
 You are a calm, frank, and supportive AI. Imagine talking to a knowledgeable friend.
 
 Style rules:
@@ -62,7 +56,38 @@ ${limitText(section4, 1500)}
 
 [SECTION 5 — EFFIC CONTEXT / TRUTH ANCHOR]
 ${limitText(section5, 3000)}
+
+[MEMORY — PREVIOUS CONVERSATION]
+${limitText(memory, 2000)}
+
+[USER MESSAGE]
+${message}
 `;
+
+  return SYSTEM_KB;
+}
+
+export async function POST(req: Request) {
+  try {
+    const { message, userId } = await req.json();
+
+    if (!message || !userId) {
+      return NextResponse.json(
+        { error: "Both message and userId are required" },
+        { status: 400 }
+      );
+    }
+
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return NextResponse.json(
+        { error: "GEMINI_API_KEY missing" },
+        { status: 500 }
+      );
+    }
+
+    // Assemble full prompt including memory
+    const SYSTEM_PROMPT = assembleSystemPrompt(userId, message);
 
     let reply: string | null = null;
     let debugData: any = null;
@@ -81,11 +106,7 @@ ${limitText(section5, 3000)}
               contents: [
                 {
                   role: "user",
-                  parts: [
-                    {
-                      text: `${SYSTEM_KB}\n\nUser message:\n${message}`,
-                    },
-                  ],
+                  parts: [{ text: SYSTEM_PROMPT }],
                 },
               ],
               generationConfig: {
@@ -126,6 +147,11 @@ ${limitText(section5, 3000)}
       });
     }
 
+    // Update session memory
+    if (!sessionMemory[userId]) sessionMemory[userId] = [];
+    sessionMemory[userId].push(`User: ${message}`);
+    sessionMemory[userId].push(`AI: ${reply}`);
+
     return NextResponse.json({ reply });
   } catch (error: any) {
     console.error("SERVER ERROR:", error);
@@ -134,4 +160,4 @@ ${limitText(section5, 3000)}
       { status: 500 }
     );
   }
-                    }
+    }
