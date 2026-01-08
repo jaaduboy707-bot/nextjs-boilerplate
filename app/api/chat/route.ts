@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import { readFile } from "fs/promises";
 import path from "path";
+import { Redis } from "@upstash/redis"; // ✅ ADDED
+
+// ---------------------------
+// UPSTASH INIT
+// ---------------------------
+const redis = Redis.fromEnv(); // ✅ ADDED
 
 // ---------------------------
 // MODEL PRIORITY
@@ -47,9 +53,6 @@ export async function POST(req: Request) {
     const body = await req.json().catch(() => ({}));
     const { message, sessionId } = body;
 
-    // ---------------------------
-    // GRACEFUL FALLBACK (NO HARD FAIL)
-    // ---------------------------
     if (!message || !sessionId) {
       return NextResponse.json({
         reply:
@@ -161,14 +164,21 @@ ${message}
     }
 
     // ---------------------------
-    // CALENDLY INTENT (NO AUTO BOOKING)
+    // CALENDLY INTENT (EMAIL PERSISTENCE ADDED)
     // ---------------------------
     const bookingIntent = parseCalendlyIntent(message);
     if (bookingIntent) {
+      await redis.set(`lead:${sessionId}`, {
+        email: bookingIntent.email,
+        preferredTime: bookingIntent.time,
+        createdAt: new Date().toISOString(),
+      }); // ✅ ADDED
+
       reply +=
         "\n\nI’ve noted your email and preferred time. I’ll confirm availability and follow up shortly.";
+
       sessionMemory[sessionId].push(
-        `Booking intent: ${bookingIntent.email} at ${bookingIntent.time}`
+        `Lead saved: ${bookingIntent.email} at ${bookingIntent.time}`
       );
     }
 
@@ -178,9 +188,6 @@ ${message}
     sessionMemory[sessionId].push(`User: ${message}`);
     if (reply) sessionMemory[sessionId].push(`AI: ${reply}`);
 
-    // ---------------------------
-    // FINAL SAFETY NET
-    // ---------------------------
     if (!reply) {
       reply =
         "I’m here and listening. Could you tell me a bit more about what you’re looking to achieve?";
