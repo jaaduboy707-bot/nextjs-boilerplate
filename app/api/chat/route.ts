@@ -1,13 +1,12 @@
 import { NextResponse } from "next/server";
 
-// Import KB files as raw text
+// Import KB files as raw text (webpack asset/source)
 import section1 from "@/data/kb/section.1.md";
 import section2 from "@/data/kb/section.2.md";
 import section3 from "@/data/kb/section.3.md";
 import section4 from "@/data/kb/section.4.md";
 import section5 from "@/data/kb/section.5.md";
 
-// Available Gemini models
 const MODELS = [
   "gemini-2.5-pro",
   "gemini-2.5-flash-lite",
@@ -24,14 +23,21 @@ function limitText(text: string, maxChars: number) {
     : text;
 }
 
-// 🔒 SESSION MEMORY (in-memory store)
-const sessionMemory: Record<string, string[]> = {};
+export async function POST(req: Request) {
+  try {
+    const { message } = await req.json();
 
-// Helper to assemble KB + memory for user
-function assembleSystemPrompt(userId: string, message: string) {
-  const memory = sessionMemory[userId]?.join("\n") || "";
+    if (!message) {
+      return NextResponse.json({ error: "No message provided" }, { status: 400 });
+    }
 
-  const SYSTEM_KB = `
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return NextResponse.json({ error: "GEMINI_API_KEY missing" }, { status: 500 });
+    }
+
+    // 🔒 STEP 1 — CAPPED KB ASSEMBLY + TONE
+    const SYSTEM_KB = `
 You are a calm, frank, and supportive AI. Imagine talking to a knowledgeable friend.
 
 Style rules:
@@ -56,38 +62,7 @@ ${limitText(section4, 1500)}
 
 [SECTION 5 — EFFIC CONTEXT / TRUTH ANCHOR]
 ${limitText(section5, 3000)}
-
-[MEMORY — PREVIOUS CONVERSATION]
-${limitText(memory, 2000)}
-
-[USER MESSAGE]
-${message}
 `;
-
-  return SYSTEM_KB;
-}
-
-export async function POST(req: Request) {
-  try {
-    const { message, userId } = await req.json();
-
-    if (!message || !userId) {
-      return NextResponse.json(
-        { error: "Both message and userId are required" },
-        { status: 400 }
-      );
-    }
-
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      return NextResponse.json(
-        { error: "GEMINI_API_KEY missing" },
-        { status: 500 }
-      );
-    }
-
-    // Assemble full prompt including memory
-    const SYSTEM_PROMPT = assembleSystemPrompt(userId, message);
 
     let reply: string | null = null;
     let debugData: any = null;
@@ -106,7 +81,11 @@ export async function POST(req: Request) {
               contents: [
                 {
                   role: "user",
-                  parts: [{ text: SYSTEM_PROMPT }],
+                  parts: [
+                    {
+                      text: `${SYSTEM_KB}\n\nUser message:\n${message}`,
+                    },
+                  ],
                 },
               ],
               generationConfig: {
@@ -121,7 +100,7 @@ export async function POST(req: Request) {
         debugData = data;
 
         if (!response.ok) {
-          if (response.status === 429) continue;
+          if (response.status === 429) continue; // try next model if rate limited
           return NextResponse.json(
             { reply: "Gemini API error", debug: data },
             { status: response.status }
@@ -133,26 +112,23 @@ export async function POST(req: Request) {
             ?.map((p: any) => p.text)
             ?.join("") || null;
 
-        if (reply) break;
+        if (reply) break; // stop trying other models if reply obtained
       } catch (err) {
         console.error(`Error with model ${model}:`, err);
         continue;
       }
     }
 
+    // 🔒 SUPPORTIVE FALLBACK — if no reply or limit reached
     if (!reply) {
-      return NextResponse.json({
-        reply: "Gemini returned no text",
-        debug: debugData,
-      });
+      reply = `Hey! I’ve shared all I can for now in this trial. 🤗  
+If you want the full detailed insights or more context, you can check out our website or reach out via the contact form — our team will guide you personally.`;
     }
 
-    // Update session memory
-    if (!sessionMemory[userId]) sessionMemory[userId] = [];
-    sessionMemory[userId].push(`User: ${message}`);
-    sessionMemory[userId].push(`AI: ${reply}`);
-
-    return NextResponse.json({ reply });
+    return NextResponse.json({
+      reply,
+      debug: debugData ? "[Debug info available]" : undefined,
+    });
   } catch (error: any) {
     console.error("SERVER ERROR:", error);
     return NextResponse.json(
@@ -160,4 +136,4 @@ export async function POST(req: Request) {
       { status: 500 }
     );
   }
-    }
+}
