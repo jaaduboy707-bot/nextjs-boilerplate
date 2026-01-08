@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
 import { readFile } from "fs/promises";
 import path from "path";
-import { Redis } from "@upstash/redis"; // ✅ ADDED
+import { Redis } from "@upstash/redis";
 
 // ---------------------------
-// UPSTASH INIT
+// UPSTASH REDIS INIT
 // ---------------------------
-const redis = Redis.fromEnv(); // ✅ ADDED
+const redis = Redis.fromEnv();
 
 // ---------------------------
 // MODEL PRIORITY
@@ -53,6 +53,9 @@ export async function POST(req: Request) {
     const body = await req.json().catch(() => ({}));
     const { message, sessionId } = body;
 
+    // ---------------------------
+    // BASIC VALIDATION
+    // ---------------------------
     if (!message || !sessionId) {
       return NextResponse.json({
         reply:
@@ -164,15 +167,16 @@ ${message}
     }
 
     // ---------------------------
-    // CALENDLY INTENT (EMAIL PERSISTENCE ADDED)
+    // CALENDLY INTENT (EMAIL PERSISTENCE)
     // ---------------------------
     const bookingIntent = parseCalendlyIntent(message);
     if (bookingIntent) {
-      await redis.set(`lead:${sessionId}`, {
+      // Persist lead in Upstash Redis
+      await redis.hset(`lead:${sessionId}`, {
         email: bookingIntent.email,
         preferredTime: bookingIntent.time,
         createdAt: new Date().toISOString(),
-      }); // ✅ ADDED
+      });
 
       reply +=
         "\n\nI’ve noted your email and preferred time. I’ll confirm availability and follow up shortly.";
@@ -188,6 +192,9 @@ ${message}
     sessionMemory[sessionId].push(`User: ${message}`);
     if (reply) sessionMemory[sessionId].push(`AI: ${reply}`);
 
+    // ---------------------------
+    // SAFETY NET
+    // ---------------------------
     if (!reply) {
       reply =
         "I’m here and listening. Could you tell me a bit more about what you’re looking to achieve?";
@@ -201,4 +208,4 @@ ${message}
         "Something unexpected happened on my side. Please try again in a moment.",
     });
   }
-}
+        }
