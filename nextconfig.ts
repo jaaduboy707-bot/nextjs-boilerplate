@@ -4,11 +4,11 @@ const nextConfig: NextConfig = {
   experimental: {
     appDir: true,
   },
-  webpack: (config) => {
-    // Modern way to import raw Markdown as string
+  webpack: (config, { isServer }) => {
+    // This allows .md files to be imported as strings
     config.module.rules.push({
       test: /\.md$/i,
-      type: "asset/source", // <-- no need to install raw-loader
+      type: "asset/source",
     });
 
     return config;
