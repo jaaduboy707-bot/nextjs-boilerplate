@@ -6,7 +6,7 @@ import { Redis } from "@upstash/redis";
 // ---------------------------
 // UPSTASH REDIS INIT
 // ---------------------------
-const redis = Redis.fromEnv();
+const redis = Redis.fromEnv(); // uses UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN
 
 // ---------------------------
 // MODEL PRIORITY
@@ -40,7 +40,6 @@ const sessionMemory: Record<string, string[]> = {};
 function parseCalendlyIntent(message: string) {
   const email = message.match(/[\w._%+-]+@[\w.-]+\.[a-zA-Z]{2,}/)?.[0];
   const time = message.match(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/)?.[0];
-
   if (!email || !time) return null;
   return { email, time };
 }
@@ -53,9 +52,6 @@ export async function POST(req: Request) {
     const body = await req.json().catch(() => ({}));
     const { message, sessionId } = body;
 
-    // ---------------------------
-    // BASIC VALIDATION
-    // ---------------------------
     if (!message || !sessionId) {
       return NextResponse.json({
         reply:
@@ -130,7 +126,7 @@ ${message}
     let reply: string | null = null;
 
     // ---------------------------
-    // GEMINI FALLBACK LOOP
+    // GEMINI AI FALLBACK LOOP
     // ---------------------------
     for (const model of MODELS) {
       try {
@@ -167,12 +163,11 @@ ${message}
     }
 
     // ---------------------------
-    // CALENDLY INTENT (EMAIL PERSISTENCE)
+    // CALENDLY INTENT (SAVE TO UPSTASH)
     // ---------------------------
     const bookingIntent = parseCalendlyIntent(message);
     if (bookingIntent) {
-      // Persist lead in Upstash Redis
-      await redis.hset(`lead:${sessionId}`, {
+      await redis.set(`lead:${sessionId}`, {
         email: bookingIntent.email,
         preferredTime: bookingIntent.time,
         createdAt: new Date().toISOString(),
@@ -187,14 +182,11 @@ ${message}
     }
 
     // ---------------------------
-    // MEMORY UPDATE
+    // UPDATE MEMORY
     // ---------------------------
     sessionMemory[sessionId].push(`User: ${message}`);
     if (reply) sessionMemory[sessionId].push(`AI: ${reply}`);
 
-    // ---------------------------
-    // SAFETY NET
-    // ---------------------------
     if (!reply) {
       reply =
         "I’m here and listening. Could you tell me a bit more about what you’re looking to achieve?";
@@ -208,4 +200,4 @@ ${message}
         "Something unexpected happened on my side. Please try again in a moment.",
     });
   }
-        }
+}
