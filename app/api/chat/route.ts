@@ -85,8 +85,9 @@ ${limitText(section5, 3000)}
                 },
               ],
               generationConfig: {
-                temperature: 0.3,
-                maxOutputTokens: 512,
+  temperature: 0.3,
+  maxOutputTokens: 350,
+}
               },
             }),
           }
