@@ -24,20 +24,20 @@ function limitText(text: string, maxChars: number) {
 }
 
 // ---------------------------
-// MEMORY SIMULATION STORAGE
+// MEMORY SIMULATION
 // ---------------------------
 const sessionMemory: Record<string, string[]> = {};
 
 // ---------------------------
 // MOCK FUNCTION TO EXTRACT EMAIL + TIME
 // ---------------------------
-// Replace with smarter AI-parsed logic later
 function parseCalendlyRequest(message: string) {
-  // Example: extract "email: abc@example.com" and "time: 2026-01-10T14:00:00"
   const emailMatch = message.match(/[\w._%+-]+@[\w.-]+\.[a-zA-Z]{2,}/);
   const timeMatch = message.match(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/);
   if (!emailMatch || !timeMatch) return null;
-  return { clientEmail: emailMatch[0], preferredTime: timeMatch[0] };
+  const startTime = new Date(timeMatch[0]);
+  const endTime = new Date(startTime.getTime() + 30 * 60 * 1000); // 30 min meeting
+  return { clientEmail: emailMatch[0], startTime: startTime.toISOString(), endTime: endTime.toISOString() };
 }
 
 // ---------------------------
@@ -48,7 +48,7 @@ export async function POST(req: Request) {
     const { message, sessionId } = await req.json();
 
     if (!message) return NextResponse.json({ error: "No message provided" }, { status: 400 });
-    if (!sessionId) return NextResponse.json({ error: "Session ID required for memory" }, { status: 400 });
+    if (!sessionId) return NextResponse.json({ error: "Session ID required" }, { status: 400 });
 
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) return NextResponse.json({ error: "GEMINI_API_KEY missing" }, { status: 500 });
@@ -57,7 +57,7 @@ export async function POST(req: Request) {
     if (!calendlyKey) return NextResponse.json({ error: "Calendly API key missing" }, { status: 500 });
 
     // ---------------------------
-    // READ KB FILES AT RUNTIME
+    // READ KB FILES
     // ---------------------------
     const kbDir = path.join(process.cwd(), "data/kb");
     const [section1, section2, section3, section4, section5] = await Promise.all([
@@ -105,7 +105,6 @@ ${limitText(section5, 3000)}
     const finalPrompt = `${SYSTEM_KB}\n\nUser message:\n${message}${memoryText}`;
 
     let reply: string | null = null;
-    let debugData: any = null;
 
     // ---------------------------
     // CALL GEMINI AI
@@ -123,15 +122,11 @@ ${limitText(section5, 3000)}
             }),
           }
         );
-
         const data = await response.json();
-        debugData = data;
-
         if (!response.ok) {
           if (response.status === 429) continue;
           return NextResponse.json({ reply: "Gemini API error", debug: data }, { status: response.status });
         }
-
         reply = data?.candidates?.[0]?.content?.parts?.map((p: any) => p.text)?.join("") || null;
         if (reply) break;
       } catch (err) {
@@ -145,7 +140,7 @@ ${limitText(section5, 3000)}
     // ---------------------------
     const calendlyData = parseCalendlyRequest(message);
     if (calendlyData) {
-      const { clientEmail, preferredTime } = calendlyData;
+      const { clientEmail, startTime, endTime } = calendlyData;
       try {
         const calendlyRes = await fetch("https://api.calendly.com/scheduled_events", {
           method: "POST",
@@ -155,13 +150,15 @@ ${limitText(section5, 3000)}
           },
           body: JSON.stringify({
             invitee: { email: clientEmail },
-            event: { start_time: preferredTime, duration: 30 },
+            event_type: "https://api.calendly.com/event_types/<YOUR_EVENT_TYPE_UUID>", // replace with your event type
+            start_time: startTime,
+            end_time: endTime,
           }),
         });
         const calendlyResp = await calendlyRes.json();
         if (calendlyRes.ok) {
-          reply += `\n\n✅ Scheduled successfully for ${preferredTime}. Check your email for confirmation.`;
-          sessionMemory[sessionId].push(`Scheduled via Calendly: ${clientEmail} at ${preferredTime}`);
+          reply += `\n\n✅ Scheduled successfully for ${startTime}. Check your email for confirmation.`;
+          sessionMemory[sessionId].push(`Scheduled via Calendly: ${clientEmail} at ${startTime}`);
         } else {
           reply += `\n\n⚠️ Could not schedule: ${calendlyResp.message || "Unknown error"}`;
         }
@@ -189,4 +186,4 @@ ${limitText(section5, 3000)}
     console.error("SERVER ERROR:", error);
     return NextResponse.json({ error: "Internal Server Error", detail: error.message }, { status: 500 });
   }
-    }
+}
