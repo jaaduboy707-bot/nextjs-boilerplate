@@ -6,10 +6,26 @@ import { Redis } from "@upstash/redis";
 // ---------------------------
 // UPSTASH REDIS INIT
 // ---------------------------
-const redis = Redis.fromEnv(); // uses UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN
+const redis = Redis.fromEnv(); 
 
 // ---------------------------
-// MODEL PRIORITY
+// CORS BRIDGE (ADDITION ONLY)
+// ---------------------------
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, x-goog-api-key",
+};
+
+export async function OPTIONS() {
+  return new NextResponse(null, {
+    status: 204,
+    headers: corsHeaders,
+  });
+}
+
+// ---------------------------
+// MODEL PRIORITY (RESTORED)
 // ---------------------------
 const MODELS = [
   "gemini-2.5-pro",
@@ -54,17 +70,15 @@ export async function POST(req: Request) {
 
     if (!message || !sessionId) {
       return NextResponse.json({
-        reply:
-          "I didn’t fully receive that. Could you rephrase or send your message again?",
-      });
+        reply: "I didn’t fully receive that. Could you rephrase or send your message again?",
+      }, { headers: corsHeaders });
     }
 
     const geminiKey = process.env.GEMINI_API_KEY;
     if (!geminiKey) {
       return NextResponse.json({
-        reply:
-          "I'm temporarily unavailable due to a configuration issue. Please try again shortly.",
-      });
+        reply: "I'm temporarily unavailable due to a configuration issue. Please try again shortly.",
+      }, { headers: corsHeaders });
     }
 
     // ---------------------------
@@ -151,11 +165,7 @@ ${message}
         const data = await res.json();
         if (!res.ok) continue;
 
-        reply =
-          data?.candidates?.[0]?.content?.parts
-            ?.map((p: any) => p.text)
-            ?.join("") || null;
-
+        reply = data?.candidates?.[0]?.content?.parts?.map((p: any) => p.text)?.join("") || null;
         if (reply) break;
       } catch {
         continue;
@@ -173,12 +183,8 @@ ${message}
         createdAt: new Date().toISOString(),
       });
 
-      reply +=
-        "\n\nI’ve noted your email and preferred time. I’ll confirm availability and follow up shortly.";
-
-      sessionMemory[sessionId].push(
-        `Lead saved: ${bookingIntent.email} at ${bookingIntent.time}`
-      );
+      reply += "\n\nI’ve noted your email and preferred time. I’ll confirm availability and follow up shortly.";
+      sessionMemory[sessionId].push(`Lead saved: ${bookingIntent.email} at ${bookingIntent.time}`);
     }
 
     // ---------------------------
@@ -188,16 +194,16 @@ ${message}
     if (reply) sessionMemory[sessionId].push(`AI: ${reply}`);
 
     if (!reply) {
-      reply =
-        "I’m here and listening. Could you tell me a bit more about what you’re looking to achieve?";
+      reply = "I’m here and listening. Could you tell me a bit more about what you’re looking to achieve?";
     }
 
-    return NextResponse.json({ reply });
+    return NextResponse.json({ reply }, { headers: corsHeaders });
+
   } catch (err) {
     console.error("SERVER ERROR:", err);
     return NextResponse.json({
-      reply:
-        "Something unexpected happened on my side. Please try again in a moment.",
-    });
+      reply: "Something unexpected happened on my side. Please try again in a moment.",
+    }, { headers: corsHeaders });
   }
 }
+
