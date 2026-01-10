@@ -9,7 +9,7 @@ import { Redis } from "@upstash/redis";
 const redis = Redis.fromEnv(); 
 
 // ---------------------------
-// CORS HEADERS & OPTIONS (Handsake for Framer)
+// CORS HEADERS & OPTIONS
 // ---------------------------
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -28,7 +28,7 @@ export async function OPTIONS() {
 // MODEL PRIORITY
 // ---------------------------
 const MODELS = [
-  "gemini-2.0-pro-exp-02-05", // Added newest model
+  "gemini-2.0-pro-exp-02-05",
   "gemini-2.0-flash",
   "gemini-2.0-flash-lite-preview-02-05",
   "gemini-1.5-pro",
@@ -69,32 +69,31 @@ export async function POST(req: Request) {
     const { message, sessionId } = body;
 
     if (!message || !sessionId) {
-      return NextResponse.json({
-        reply: "I didn’t fully receive that. Could you rephrase or send your message again?",
-      }, { headers: corsHeaders });
+      return NextResponse.json(
+        { reply: "I didn’t fully receive that. Could you rephrase or send your message again?" },
+        { headers: corsHeaders }
+      );
     }
 
     const geminiKey = process.env.GEMINI_API_KEY;
     if (!geminiKey) {
-      return NextResponse.json({
-        reply: "Configuration error: API key missing.",
-      }, { headers: corsHeaders });
+      return NextResponse.json(
+        { reply: "Configuration error: API key missing." },
+        { headers: corsHeaders }
+      );
     }
 
     // ---------------------------
-    // LOAD KNOWLEDGE BASE (FIXED PATHS)
+    // LOAD KNOWLEDGE BASE
     // ---------------------------
-    // Use path.join with separate segments to ensure compatibility
-    const kbDir = path.join(process.cwd(), "data/kb");
-    
-    const loadKbFile = async (fileName: string) => {
-        try {
-            const fullPath = path.join(kbDir, fileName);
-            return await readFile(fullPath, "utf-8");
-        } catch (e) {
-            console.error(`Failed to load ${fileName}:`, e);
-            return "";
-        }
+    const kbDir = path.join(process.cwd(), "data", "kb");
+
+    const loadKbFile = async (file: string) => {
+      try {
+        return await readFile(path.join(kbDir, file), "utf-8");
+      } catch {
+        return "";
+      }
     };
 
     const [s1, s2, s3, s4, s5] = await Promise.all([
@@ -132,18 +131,24 @@ ${limitText(s5, 3000)}
     let reply: string | null = null;
 
     // ---------------------------
-    // GEMINI AI FALLBACK LOOP
+    // GEMINI AI FALLBACK LOOP (FIXED)
     // ---------------------------
     for (const model of MODELS) {
       try {
         const res = await fetch(
-          `https://generativelanguage.googleapis.com/v1/models/${model}:generateContent?key=${geminiKey}`,
+          `https://generativelanguage.googleapis.com/v1/models/${model}:generateContent`,
           {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+              "Content-Type": "application/json",
+              "x-goog-api-key": geminiKey,
+            },
             body: JSON.stringify({
               contents: [{ role: "user", parts: [{ text: finalPrompt }] }],
-              generationConfig: { temperature: 0.4, maxOutputTokens: 600 },
+              generationConfig: {
+                temperature: 0.4,
+                maxOutputTokens: 600,
+              },
             }),
           }
         );
@@ -153,7 +158,7 @@ ${limitText(s5, 3000)}
 
         reply = data?.candidates?.[0]?.content?.parts?.[0]?.text || null;
         if (reply) break;
-      } catch (err) {
+      } catch {
         continue;
       }
     }
@@ -168,20 +173,23 @@ ${limitText(s5, 3000)}
         preferredTime: bookingIntent.time,
         createdAt: new Date().toISOString(),
       });
-      reply = (reply || "") + "\n\nI’ve noted your contact details. I’ll confirm and follow up shortly.";
+      reply =
+        (reply || "") +
+        "\n\nI’ve noted your contact details. I’ll confirm and follow up shortly.";
     }
 
-    if (!reply) reply = "I'm listening. Can you tell me more about your requirements?";
+    if (!reply) {
+      reply = "I'm listening. Can you tell me more about your requirements?";
+    }
 
-    // Update Memory
     sessionMemory[sessionId].push(`User: ${message}`, `AI: ${reply}`);
 
     return NextResponse.json({ reply }, { headers: corsHeaders });
-
   } catch (err) {
     console.error("SERVER ERROR:", err);
-    return NextResponse.json({
-      reply: "Something unexpected happened. Please try again.",
-    }, { headers: corsHeaders });
+    return NextResponse.json(
+      { reply: "Something unexpected happened. Please try again." },
+      { headers: corsHeaders }
+    );
   }
 }
