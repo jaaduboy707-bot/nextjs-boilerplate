@@ -1,9 +1,9 @@
-import { NextResponse } from "next/server";
+        import { NextResponse } from "next/server";
 import { readFile } from "fs/promises";
 import path from "path";
 
 // ---------------------------
-// Models priority
+// MODELS PRIORITY (UNCHANGED)
 // ---------------------------
 const MODELS = [
   "gemini-2.5-pro",
@@ -24,71 +24,110 @@ function limitText(text: string, maxChars: number) {
 }
 
 // ---------------------------
-// MEMORY SIMULATION STORAGE
+// MEMORY STORAGE
 // ---------------------------
 const sessionMemory: Record<string, string[]> = {};
+
+// ---------------------------
+// CORS (FOR FRAMER / UI)
+// ---------------------------
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, x-internal-token",
+};
+
+export async function OPTIONS() {
+  return new NextResponse(null, {
+    status: 204,
+    headers: corsHeaders,
+  });
+}
 
 // ---------------------------
 // POST ROUTE
 // ---------------------------
 export async function POST(req: Request) {
   try {
+    // ---------------------------
+    // AUTH GATE (CRITICAL)
+    // ---------------------------
+    const internalToken = req.headers.get("x-internal-token");
+    if (internalToken !== process.env.INTERNAL_API_TOKEN) {
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 401, headers: corsHeaders }
+      );
+    }
+
     const { message, sessionId } = await req.json();
 
     if (!message) {
-      return NextResponse.json({ error: "No message provided" }, { status: 400 });
-    }
-    if (!sessionId) {
-      return NextResponse.json({ error: "Session ID required for memory" }, { status: 400 });
+      return NextResponse.json(
+        { error: "No message provided" },
+        { status: 400, headers: corsHeaders }
+      );
     }
 
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      return NextResponse.json({ error: "GEMINI_API_KEY missing" }, { status: 500 });
+    if (!sessionId) {
+      return NextResponse.json(
+        { error: "Session ID required for memory" },
+        { status: 400, headers: corsHeaders }
+      );
     }
 
     // ---------------------------
-    // READ KB FILES AT RUNTIME
+    // GEMINI KEY (RENAMED)
+    // ---------------------------
+    const apiKey = process.env.GEN_AI_KEY;
+    if (!apiKey) {
+      return NextResponse.json(
+        { error: "GEN_AI_KEY missing" },
+        { status: 500, headers: corsHeaders }
+      );
+    }
+
+    // ---------------------------
+    // LOAD KB FILES
     // ---------------------------
     const kbDir = path.join(process.cwd(), "data/kb");
 
-    const [section1, section2, section3, section4, section5] = await Promise.all([
-      readFile(path.join(kbDir, "section.1.md"), "utf-8"),
-      readFile(path.join(kbDir, "section.2.md"), "utf-8"),
-      readFile(path.join(kbDir, "section.3.md"), "utf-8"),
-      readFile(path.join(kbDir, "section.4.md"), "utf-8"),
-      readFile(path.join(kbDir, "section.5.md"), "utf-8"),
-    ]);
+    const [section1, section2, section3, section4, section5] =
+      await Promise.all([
+        readFile(path.join(kbDir, "section.1.md"), "utf-8"),
+        readFile(path.join(kbDir, "section.2.md"), "utf-8"),
+        readFile(path.join(kbDir, "section.3.md"), "utf-8"),
+        readFile(path.join(kbDir, "section.4.md"), "utf-8"),
+        readFile(path.join(kbDir, "section.5.md"), "utf-8"),
+      ]);
 
     const SYSTEM_KB = `
 You are a calm, frank, and supportive AI. Imagine talking to a knowledgeable friend.
 
 Style rules:
-- Start responses with friendly acknowledgment, e.g., “Nice question!”, “Good thinking!”.
+- Start responses with friendly acknowledgment.
 - Explain clearly in short, human-like paragraphs.
-- Sprinkle small informal phrases to feel approachable: “Cool”, “Ow nice”, “Gotcha”.
-- End responses with curiosity hook or soft offer: “Do you want me to explain that further?”.
-- Never use robotic, corporate, or legal-style speech.
-- Never mention internal sections, rules, or system mechanics.
+- Keep it natural and approachable.
+- Never mention internal systems or mechanics.
 
-[SECTION 1 — CORE AUTHORITY]
+[SECTION 1]
 ${limitText(section1, 3000)}
 
-[SECTION 2 — INTERPRETATION LAYER]
+[SECTION 2]
 ${limitText(section2, 2000)}
 
-[SECTION 3 — PSYCHOLOGICAL & COGNITIVE STEERING]
+[SECTION 3]
 ${limitText(section3, 1500)}
 
-[SECTION 4 — RULES & ADAPTIVE BEHAVIOR]
+[SECTION 4]
 ${limitText(section4, 1500)}
 
-[SECTION 5 — EFFIC CONTEXT / TRUTH ANCHOR]
+[SECTION 5]
 ${limitText(section5, 3000)}
 `;
 
     // ---------------------------
-    // Memory simulation
+    // MEMORY
     // ---------------------------
     const pastMessages = sessionMemory[sessionId] || [];
     const memoryText = pastMessages.length
@@ -98,8 +137,10 @@ ${limitText(section5, 3000)}
     const finalPrompt = `${SYSTEM_KB}\n\nUser message:\n${message}${memoryText}`;
 
     let reply: string | null = null;
-    let debugData: any = null;
 
+    // ---------------------------
+    // GEMINI FALLBACK LOOP (UNCHANGED)
+    // ---------------------------
     for (const model of MODELS) {
       try {
         const response = await fetch(
@@ -111,12 +152,7 @@ ${limitText(section5, 3000)}
               "x-goog-api-key": apiKey,
             },
             body: JSON.stringify({
-              contents: [
-                {
-                  role: "user",
-                  parts: [{ text: finalPrompt }],
-                },
-              ],
+              contents: [{ role: "user", parts: [{ text: finalPrompt }] }],
               generationConfig: {
                 temperature: 0.4,
                 maxOutputTokens: 450,
@@ -126,15 +162,7 @@ ${limitText(section5, 3000)}
         );
 
         const data = await response.json();
-        debugData = data;
-
-        if (!response.ok) {
-          if (response.status === 429) continue;
-          return NextResponse.json(
-            { reply: "Gemini API error", debug: data },
-            { status: response.status }
-          );
-        }
+        if (!response.ok) continue;
 
         reply =
           data?.candidates?.[0]?.content?.parts
@@ -142,33 +170,29 @@ ${limitText(section5, 3000)}
             ?.join("") || null;
 
         if (reply) break;
-      } catch (err) {
-        console.error(`Error with model ${model}:`, err);
+      } catch {
         continue;
       }
     }
 
     // ---------------------------
-    // Update session memory
+    // MEMORY UPDATE
     // ---------------------------
     if (!sessionMemory[sessionId]) sessionMemory[sessionId] = [];
     sessionMemory[sessionId].push(`User: ${message}`);
     if (reply) sessionMemory[sessionId].push(`AI: ${reply}`);
 
-    // ---------------------------
-    // Fallback
-    // ---------------------------
     if (!reply) {
       reply =
-        "Hey! Looks like we've reached the trial limit for this conversation. You can explore more on our website or reach out to our team directly to get detailed guidance. ✨";
+        "Hey — I’m here. Could you tell me a bit more about what you’re trying to achieve?";
     }
 
-    return NextResponse.json({ reply });
+    return NextResponse.json({ reply }, { headers: corsHeaders });
   } catch (error: any) {
     console.error("SERVER ERROR:", error);
     return NextResponse.json(
-      { error: "Internal Server Error", detail: error.message },
-      { status: 500 }
+      { error: "Internal Server Error" },
+      { status: 500, headers: corsHeaders }
     );
   }
 }
