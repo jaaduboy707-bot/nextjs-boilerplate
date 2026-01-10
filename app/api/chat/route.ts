@@ -1,16 +1,37 @@
-        
 import { NextResponse } from "next/server";
 import { readFile } from "fs/promises";
 import path from "path";
+import { Redis } from "@upstash/redis";
+
+// ---------------------------
+// UPSTASH REDIS INIT
+// ---------------------------
+const redis = Redis.fromEnv(); // uses UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN
+
+// ---------------------------
+// CORS HEADERS & OPTIONS
+// ---------------------------
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, x-goog-api-key, x-endpoint-key",
+};
+
+export async function OPTIONS() {
+  return new NextResponse(null, {
+    status: 204,
+    headers: corsHeaders,
+  });
+}
 
 // ---------------------------
 // MODEL PRIORITY
 // ---------------------------
 const MODELS = [
-  "gemini-2.5-pro",
-  "gemini-2.5-flash-lite",
+  "gemini-2.0-pro-exp-02-05",
   "gemini-2.0-flash",
-  "gemini-2.0-flash-lite",
+  "gemini-2.0-flash-lite-preview-02-05",
+  "gemini-1.5-pro",
   "gemini-1.5-flash",
 ];
 
@@ -20,26 +41,23 @@ const MODELS = [
 function limitText(text: string, maxChars: number) {
   if (!text) return "";
   return text.length > maxChars
-    ? text.slice(0, maxChars) + "\n\n[TRUNCATED FOR SAFETY]"
+    ? text.slice(0, maxChars) + "\n\n[Context trimmed for safety]"
     : text;
 }
 
 // ---------------------------
-// MEMORY (TEMP – IN-MEMORY)
+// SESSION MEMORY
 // ---------------------------
 const sessionMemory: Record<string, string[]> = {};
 
 // ---------------------------
-// CORS (FOR FRAMER / BROWSER)
+// BASIC EMAIL + TIME PARSER
 // ---------------------------
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type",
-};
-
-export async function OPTIONS() {
-  return new NextResponse(null, { status: 204, headers: corsHeaders });
+function parseCalendlyIntent(message: string) {
+  const email = message.match(/[\w._%+-]+@[\w.-]+\.[a-zA-Z]{2,}/)?.[0];
+  const time = message.match(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/)?.[0];
+  if (!email || !time) return null;
+  return { email, time };
 }
 
 // ---------------------------
@@ -47,62 +65,88 @@ export async function OPTIONS() {
 // ---------------------------
 export async function POST(req: Request) {
   try {
-    const { message, sessionId } = await req.json();
+    const body = await req.json().catch(() => ({}));
+    const { message, sessionId } = body;
+
+    // ---------------------------
+    // SIMPLE AUTH CHECK (Protect endpoint)
+    // ---------------------------
+    const endpointKey = req.headers.get("x-endpoint-key");
+    if (!endpointKey || endpointKey !== process.env.ENDPOINT_SECRET) {
+      return NextResponse.json(
+        { reply: "Unauthorized" },
+        { status: 401, headers: corsHeaders }
+      );
+    }
 
     if (!message || !sessionId) {
       return NextResponse.json(
-        { reply: "Message and sessionId are required." },
-        { status: 400, headers: corsHeaders }
-      );
-    }
-
-    const apiKey = process.env.GEN_AI_KEY;
-    if (!apiKey) {
-      return NextResponse.json(
-        { reply: "GEN_AI_KEY missing in environment variables." },
-        { status: 500, headers: corsHeaders }
+        { reply: "I didn’t fully receive that. Could you rephrase or send your message again?" },
+        { headers: corsHeaders }
       );
     }
 
     // ---------------------------
-    // LOAD KB FILES
+    // USE NEW ENV KEY
+    // ---------------------------
+    const geminiKey = process.env.GEN_AI_KEY;
+    if (!geminiKey) {
+      return NextResponse.json(
+        { reply: "Configuration error: API key missing." },
+        { headers: corsHeaders }
+      );
+    }
+
+    // ---------------------------
+    // LOAD KNOWLEDGE BASE
     // ---------------------------
     const kbDir = path.join(process.cwd(), "data", "kb");
 
+    const loadKbFile = async (file: string) => {
+      try {
+        return await readFile(path.join(kbDir, file), "utf-8");
+      } catch {
+        return "";
+      }
+    };
+
     const [s1, s2, s3, s4, s5] = await Promise.all([
-      readFile(path.join(kbDir, "section.1.md"), "utf-8"),
-      readFile(path.join(kbDir, "section.2.md"), "utf-8"),
-      readFile(path.join(kbDir, "section.3.md"), "utf-8"),
-      readFile(path.join(kbDir, "section.4.md"), "utf-8"),
-      readFile(path.join(kbDir, "section.5.md"), "utf-8"),
+      loadKbFile("section.1.md"),
+      loadKbFile("section.2.md"),
+      loadKbFile("section.3.md"),
+      loadKbFile("section.4.md"),
+      loadKbFile("section.5.md"),
     ]);
 
     const SYSTEM_PROMPT = `
-You are a calm, competent, grounded AI assistant.
+You are a calm, competent, and grounded AI assistant for Effic.
+You speak like a knowledgeable human, not a bot.
 
-[CORE]
+Rules:
+- Clear, short paragraphs. No emojis.
+- Use the following context to answer. If it's not there, be honest.
+
+[CORE CONTEXT]
 ${limitText(s1, 3000)}
-
 [INTERPRETATION]
 ${limitText(s2, 2000)}
-
-[STEERING]
+[COGNITIVE STEERING]
 ${limitText(s3, 1500)}
-
-[ADAPTIVE]
+[ADAPTIVE RULES]
 ${limitText(s4, 1500)}
-
-[TRUTH]
+[TRUTH ANCHOR]
 ${limitText(s5, 3000)}
 `;
 
     if (!sessionMemory[sessionId]) sessionMemory[sessionId] = [];
     const history = sessionMemory[sessionId].slice(-6).join("\n");
-
-    const finalPrompt = `${SYSTEM_PROMPT}\n\nConversation:\n${history}\n\nUser: ${message}`;
+    const finalPrompt = `${SYSTEM_PROMPT}\n\nHistory:\n${history}\n\nUser: ${message}`;
 
     let reply: string | null = null;
 
+    // ---------------------------
+    // GEMINI AI FALLBACK LOOP
+    // ---------------------------
     for (const model of MODELS) {
       try {
         const res = await fetch(
@@ -111,13 +155,13 @@ ${limitText(s5, 3000)}
             method: "POST",
             headers: {
               "Content-Type": "application/json",
-              "x-goog-api-key": apiKey,
+              "x-goog-api-key": geminiKey,
             },
             body: JSON.stringify({
               contents: [{ role: "user", parts: [{ text: finalPrompt }] }],
               generationConfig: {
                 temperature: 0.4,
-                maxOutputTokens: 500,
+                maxOutputTokens: 600,
               },
             }),
           }
@@ -126,31 +170,40 @@ ${limitText(s5, 3000)}
         const data = await res.json();
         if (!res.ok) continue;
 
-        reply =
-          data?.candidates?.[0]?.content?.parts
-            ?.map((p: any) => p.text)
-            ?.join("") || null;
-
+        reply = data?.candidates?.[0]?.content?.parts?.[0]?.text || null;
         if (reply) break;
       } catch {
         continue;
       }
     }
 
-    sessionMemory[sessionId].push(`User: ${message}`);
-    if (reply) sessionMemory[sessionId].push(`AI: ${reply}`);
+    // ---------------------------
+    // LEAD SAVING
+    // ---------------------------
+    const bookingIntent = parseCalendlyIntent(message);
+    if (bookingIntent) {
+      await redis.set(`lead:${sessionId}`, {
+        email: bookingIntent.email,
+        preferredTime: bookingIntent.time,
+        createdAt: new Date().toISOString(),
+      });
+      reply =
+        (reply || "") +
+        "\n\nI’ve noted your contact details. I’ll confirm and follow up shortly.";
+    }
 
     if (!reply) {
-      reply =
-        "I'm here. Could you tell me a bit more about what you're trying to do?";
+      reply = "I'm listening. Can you tell me more about your requirements?";
     }
+
+    sessionMemory[sessionId].push(`User: ${message}`, `AI: ${reply}`);
 
     return NextResponse.json({ reply }, { headers: corsHeaders });
   } catch (err) {
     console.error("SERVER ERROR:", err);
     return NextResponse.json(
-      { reply: "Server error. Try again shortly." },
-      { status: 500, headers: corsHeaders }
+      { reply: "Something unexpected happened. Please try again." },
+      { headers: corsHeaders }
     );
   }
-}
+       }
