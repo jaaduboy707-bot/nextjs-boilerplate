@@ -72,10 +72,12 @@ export async function POST(req: Request) {
       );
     }
 
+    // --- DEBUGGING BLOCK ---
     const geminiKey = process.env.GEN_AI_KEY;
     if (!geminiKey) {
+      const availableEnvKeys = Object.keys(process.env).filter(k => k.includes("KEY") || k.includes("AI"));
       return NextResponse.json(
-        { reply: "Configuration error: API key missing." },
+        { reply: `Configuration error: GEN_AI_KEY missing. Vercel sees these keys: ${availableEnvKeys.join(", ") || "none"}` },
         { headers: corsHeaders }
       );
     }
@@ -184,4 +186,4 @@ Rules:
       { headers: corsHeaders }
     );
   }
-  }
+}
