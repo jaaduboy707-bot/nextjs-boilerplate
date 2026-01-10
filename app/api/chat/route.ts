@@ -24,6 +24,7 @@ const MODELS = [
 
 const sessionMemory: Record<string, string[]> = {};
 
+// Extract Calendly booking info
 function parseCalendlyIntent(message: string) {
   const email = message.match(/[\w._%+-]+@[\w.-]+\.[a-zA-Z]{2,}/)?.[0];
   const time = message.match(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/)?.[0];
@@ -38,21 +39,21 @@ export async function POST(req: Request) {
 
     if (!message || !sessionId) {
       return NextResponse.json(
-        { reply: "I didn’t fully receive that. Could you try again?" },
+        { reply: "I didn’t fully receive that. Could you resend?" },
         { headers: corsHeaders }
       );
     }
 
     const geminiKey = process.env.GEN_AI_KEY;
     if (!geminiKey) {
-      console.error("GEN_AI_KEY missing");
+      console.error("GEN_AI_KEY missing in env");
       return NextResponse.json(
-        { reply: "Server configuration error. Please try later." },
+        { reply: "Configuration issue. Please try again later." },
         { headers: corsHeaders }
       );
     }
 
-    // Load Knowledge Base
+    // Load knowledge base
     const kbDir = path.join(process.cwd(), "data/kb");
     let knowledgeBase = "";
     for (let i = 1; i <= 5; i++) {
@@ -68,7 +69,11 @@ export async function POST(req: Request) {
     }
 
     // SYSTEM PROMPT
-    const rawSystemPrompt = `${knowledgeBase.length > 10 ? `Use this context: ${knowledgeBase}` : "You are Effic AI."}
+    const rawSystemPrompt = `${
+      knowledgeBase.length > 10
+        ? `Use this context: ${knowledgeBase}`
+        : "You are Effic AI."
+    }
 
 You are Effic AI, the AI interface of Effic — an AI transformation and deployment agency.
 You are a senior agency operator embedded into the product experience.
@@ -81,20 +86,18 @@ Tone: Calm, clear, confident, supportive, trustworthy.
 
 History + instructions follow.`;
 
-    // Limit system prompt to last 14k chars for API stability
     const SYSTEM_PROMPT =
       rawSystemPrompt.length > 14000
         ? rawSystemPrompt.slice(-14000)
         : rawSystemPrompt;
 
-    // Initialize session memory
     if (!sessionMemory[sessionId]) sessionMemory[sessionId] = [];
     const history = sessionMemory[sessionId].slice(-8).join("\n");
     const finalPrompt = `${SYSTEM_PROMPT}\n\nHistory:\n${history}\n\nUser: ${message}`;
 
     let reply: string | null = null;
 
-    // Try each model in order until one gives a reply
+    // Try models in order
     for (const model of MODELS) {
       try {
         const res = await fetch(
@@ -112,21 +115,21 @@ History + instructions follow.`;
         const data = await res.json();
         reply = data?.candidates?.[0]?.content?.[0]?.text?.trim() || null;
 
-        // If a valid reply found, stop trying other models
-        if (reply && reply.length > 5) break;
+        // Only accept a real reply
+        if (reply && reply.length > 10) break;
       } catch (err) {
-        console.error(`Model ${model} failed`, err);
+        console.error(`Model ${model} failed:`, err);
         continue;
       }
     }
 
     // Safe fallback
-    if (!reply || reply.length < 5) {
+    if (!reply) {
       reply =
-        "Alright, let’s clarify this together. Can you give me a little more context so I can guide you properly?";
+        "I didn’t quite get that. Could you clarify a bit so I can guide you effectively?";
     }
 
-    // Check and save Calendly intent
+    // Parse booking / lead info
     const bookingIntent = parseCalendlyIntent(message);
     if (bookingIntent) {
       try {
@@ -138,7 +141,7 @@ History + instructions follow.`;
         reply +=
           "\n\nI’ve noted your contact details. I’ll confirm and follow up shortly.";
       } catch (err) {
-        console.error("Error saving lead", err);
+        console.error("Failed to save lead:", err);
       }
     }
 
@@ -148,9 +151,9 @@ History + instructions follow.`;
 
     return NextResponse.json({ reply }, { headers: corsHeaders });
   } catch (err) {
-    console.error("POST handler error:", err);
+    console.error("POST error:", err);
     return NextResponse.json(
-      { reply: "Something went wrong. Try again in a moment." },
+      { reply: "Something went wrong. Please try again." },
       { headers: corsHeaders }
     );
   }
