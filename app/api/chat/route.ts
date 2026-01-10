@@ -6,32 +6,16 @@ import { Redis } from "@upstash/redis";
 // ---------------------------
 // UPSTASH REDIS INIT
 // ---------------------------
-const redis = Redis.fromEnv(); 
-
-// ---------------------------
-// CORS HEADERS & OPTIONS
-// ---------------------------
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, x-goog-api-key",
-};
-
-export async function OPTIONS() {
-  return new NextResponse(null, {
-    status: 204,
-    headers: corsHeaders,
-  });
-}
+const redis = Redis.fromEnv(); // uses UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN
 
 // ---------------------------
 // MODEL PRIORITY
 // ---------------------------
 const MODELS = [
-  "gemini-2.0-pro-exp-02-05",
+  "gemini-2.5-pro",
+  "gemini-2.5-flash-lite",
   "gemini-2.0-flash",
-  "gemini-2.0-flash-lite-preview-02-05",
-  "gemini-1.5-pro",
+  "gemini-2.0-flash-lite",
   "gemini-1.5-flash",
 ];
 
@@ -46,7 +30,7 @@ function limitText(text: string, maxChars: number) {
 }
 
 // ---------------------------
-// SESSION MEMORY
+// SESSION MEMORY (IN-MEMORY)
 // ---------------------------
 const sessionMemory: Record<string, string[]> = {};
 
@@ -69,69 +53,80 @@ export async function POST(req: Request) {
     const { message, sessionId } = body;
 
     if (!message || !sessionId) {
-      return NextResponse.json(
-        { reply: "I didn’t fully receive that. Could you rephrase or send your message again?" },
-        { headers: corsHeaders }
-      );
+      return NextResponse.json({
+        reply:
+          "I didn’t fully receive that. Could you rephrase or send your message again?",
+      });
     }
 
     const geminiKey = process.env.GEMINI_API_KEY;
     if (!geminiKey) {
-      return NextResponse.json(
-        { reply: "Configuration error: API key missing." },
-        { headers: corsHeaders }
-      );
+      return NextResponse.json({
+        reply:
+          "I'm temporarily unavailable due to a configuration issue. Please try again shortly.",
+      });
     }
 
     // ---------------------------
     // LOAD KNOWLEDGE BASE
     // ---------------------------
-    const kbDir = path.join(process.cwd(), "data", "kb");
-
-    const loadKbFile = async (file: string) => {
-      try {
-        return await readFile(path.join(kbDir, file), "utf-8");
-      } catch {
-        return "";
-      }
-    };
-
+    const kbDir = path.join(process.cwd(), "data/kb");
     const [s1, s2, s3, s4, s5] = await Promise.all([
-      loadKbFile("section.1.md"),
-      loadKbFile("section.2.md"),
-      loadKbFile("section.3.md"),
-      loadKbFile("section.4.md"),
-      loadKbFile("section.5.md"),
+      readFile(path.join(kbDir, "section.1.md"), "utf-8"),
+      readFile(path.join(kbDir, "section.2.md"), "utf-8"),
+      readFile(path.join(kbDir, "section.3.md"), "utf-8"),
+      readFile(path.join(kbDir, "section.4.md"), "utf-8"),
+      readFile(path.join(kbDir, "section.5.md"), "utf-8"),
     ]);
 
     const SYSTEM_PROMPT = `
-You are a calm, competent, and grounded AI assistant for Effic.
+You are a calm, competent, and grounded AI assistant.
 You speak like a knowledgeable human, not a bot.
 
 Rules:
-- Clear, short paragraphs. No emojis.
-- Use the following context to answer. If it's not there, be honest.
+- Clear, short paragraphs
+- No emojis
+- No hype language
+- No technical explanations unless asked
+- Guide the user forward naturally
+- Never mention internal systems or APIs
 
 [CORE CONTEXT]
 ${limitText(s1, 3000)}
+
 [INTERPRETATION]
 ${limitText(s2, 2000)}
+
 [COGNITIVE STEERING]
 ${limitText(s3, 1500)}
+
 [ADAPTIVE RULES]
 ${limitText(s4, 1500)}
+
 [TRUTH ANCHOR]
 ${limitText(s5, 3000)}
 `;
 
+    // ---------------------------
+    // MEMORY
+    // ---------------------------
     if (!sessionMemory[sessionId]) sessionMemory[sessionId] = [];
     const history = sessionMemory[sessionId].slice(-6).join("\n");
-    const finalPrompt = `${SYSTEM_PROMPT}\n\nHistory:\n${history}\n\nUser: ${message}`;
+
+    const finalPrompt = `
+${SYSTEM_PROMPT}
+
+Conversation so far:
+${history}
+
+User:
+${message}
+`;
 
     let reply: string | null = null;
 
     // ---------------------------
-    // GEMINI AI FALLBACK LOOP (FIXED)
+    // GEMINI AI FALLBACK LOOP
     // ---------------------------
     for (const model of MODELS) {
       try {
@@ -147,7 +142,7 @@ ${limitText(s5, 3000)}
               contents: [{ role: "user", parts: [{ text: finalPrompt }] }],
               generationConfig: {
                 temperature: 0.4,
-                maxOutputTokens: 600,
+                maxOutputTokens: 500,
               },
             }),
           }
@@ -156,7 +151,11 @@ ${limitText(s5, 3000)}
         const data = await res.json();
         if (!res.ok) continue;
 
-        reply = data?.candidates?.[0]?.content?.parts?.[0]?.text || null;
+        reply =
+          data?.candidates?.[0]?.content?.parts
+            ?.map((p: any) => p.text)
+            ?.join("") || null;
+
         if (reply) break;
       } catch {
         continue;
@@ -164,7 +163,7 @@ ${limitText(s5, 3000)}
     }
 
     // ---------------------------
-    // LEAD SAVING
+    // CALENDLY INTENT (SAVE TO UPSTASH)
     // ---------------------------
     const bookingIntent = parseCalendlyIntent(message);
     if (bookingIntent) {
@@ -173,23 +172,32 @@ ${limitText(s5, 3000)}
         preferredTime: bookingIntent.time,
         createdAt: new Date().toISOString(),
       });
-      reply =
-        (reply || "") +
-        "\n\nI’ve noted your contact details. I’ll confirm and follow up shortly.";
+
+      reply +=
+        "\n\nI’ve noted your email and preferred time. I’ll confirm availability and follow up shortly.";
+
+      sessionMemory[sessionId].push(
+        `Lead saved: ${bookingIntent.email} at ${bookingIntent.time}`
+      );
     }
+
+    // ---------------------------
+    // UPDATE MEMORY
+    // ---------------------------
+    sessionMemory[sessionId].push(`User: ${message}`);
+    if (reply) sessionMemory[sessionId].push(`AI: ${reply}`);
 
     if (!reply) {
-      reply = "I'm listening. Can you tell me more about your requirements?";
+      reply =
+        "I’m here and listening. Could you tell me a bit more about what you’re looking to achieve?";
     }
 
-    sessionMemory[sessionId].push(`User: ${message}`, `AI: ${reply}`);
-
-    return NextResponse.json({ reply }, { headers: corsHeaders });
+    return NextResponse.json({ reply });
   } catch (err) {
     console.error("SERVER ERROR:", err);
-    return NextResponse.json(
-      { reply: "Something unexpected happened. Please try again." },
-      { headers: corsHeaders }
-    );
+    return NextResponse.json({
+      reply:
+        "Something unexpected happened on my side. Please try again in a moment.",
+    });
   }
-}
+  }
