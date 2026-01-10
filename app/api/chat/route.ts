@@ -3,10 +3,14 @@ import { readFile } from "fs/promises";
 import path from "path";
 import { Redis } from "@upstash/redis";
 
-// Initialize Upstash
+// ---------------------------
+// UPSTASH REDIS INIT
+// ---------------------------
 const redis = Redis.fromEnv(); 
 
-// 1. THE CORS HANDSHAKE (Crucial for Framer)
+// ---------------------------
+// CORS HEADERS & OPTIONS (Handsake for Framer)
+// ---------------------------
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
@@ -14,90 +18,171 @@ const corsHeaders = {
 };
 
 export async function OPTIONS() {
-  return new NextResponse(null, { status: 204, headers: corsHeaders });
+  return new NextResponse(null, {
+    status: 204,
+    headers: corsHeaders,
+  });
 }
 
+// ---------------------------
+// MODEL PRIORITY
+// ---------------------------
 const MODELS = [
-  "gemini-2.5-pro",
-  "gemini-2.5-flash-lite",
+  "gemini-2.0-pro-exp-02-05", // Added newest model
   "gemini-2.0-flash",
-  "gemini-2.0-flash-lite",
+  "gemini-2.0-flash-lite-preview-02-05",
+  "gemini-1.5-pro",
   "gemini-1.5-flash",
 ];
 
+// ---------------------------
+// TEXT SAFETY LIMIT
+// ---------------------------
 function limitText(text: string, maxChars: number) {
   if (!text) return "";
-  return text.length > maxChars ? text.slice(0, maxChars) + "..." : text;
+  return text.length > maxChars
+    ? text.slice(0, maxChars) + "\n\n[Context trimmed for safety]"
+    : text;
 }
 
+// ---------------------------
+// SESSION MEMORY
+// ---------------------------
 const sessionMemory: Record<string, string[]> = {};
 
+// ---------------------------
+// BASIC EMAIL + TIME PARSER
+// ---------------------------
+function parseCalendlyIntent(message: string) {
+  const email = message.match(/[\w._%+-]+@[\w.-]+\.[a-zA-Z]{2,}/)?.[0];
+  const time = message.match(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/)?.[0];
+  if (!email || !time) return null;
+  return { email, time };
+}
+
+// ---------------------------
+// POST HANDLER
+// ---------------------------
 export async function POST(req: Request) {
   try {
-    const { message, sessionId } = await req.json();
+    const body = await req.json().catch(() => ({}));
+    const { message, sessionId } = body;
 
-    const geminiKey = process.env.GEMINI_API_KEY;
-    if (!geminiKey) return NextResponse.json({ reply: "API Key Missing" }, { headers: corsHeaders });
-
-    // 2. THE KNOWLEDGE BASE LOAD (Enhanced)
-    const kbDir = path.join(process.cwd(), "data", "kb");
-    let context = "";
-    
-    // We try to load all 5 sections. If a section is missing, we skip it instead of crashing.
-    for (let i = 1; i <= 5; i++) {
-        try {
-            const content = await readFile(path.join(kbDir, `section.${i}.md`), "utf-8");
-            context += `\n[Section ${i}]\n${content}`;
-        } catch (e) {
-            console.log(`Skipping section ${i}: File not found`);
-        }
+    if (!message || !sessionId) {
+      return NextResponse.json({
+        reply: "I didn’t fully receive that. Could you rephrase or send your message again?",
+      }, { headers: corsHeaders });
     }
 
-    const SYSTEM_PROMPT = `
-You are Effic AI, a calm and grounded assistant. 
-Use the following context to answer the user. If the answer isn't in the context, be honest.
+    const geminiKey = process.env.GEMINI_API_KEY;
+    if (!geminiKey) {
+      return NextResponse.json({
+        reply: "Configuration error: API key missing.",
+      }, { headers: corsHeaders });
+    }
 
-[KNOWLEDGE BASE]
-${limitText(context, 8000)}
+    // ---------------------------
+    // LOAD KNOWLEDGE BASE (FIXED PATHS)
+    // ---------------------------
+    // Use path.join with separate segments to ensure compatibility
+    const kbDir = path.join(process.cwd(), "data", "kb");
+    
+    const loadKbFile = async (fileName: string) => {
+        try {
+            const fullPath = path.join(kbDir, fileName);
+            return await readFile(fullPath, "utf-8");
+        } catch (e) {
+            console.error(`Failed to load ${fileName}:`, e);
+            return "";
+        }
+    };
+
+    const [s1, s2, s3, s4, s5] = await Promise.all([
+      loadKbFile("section.1.md"),
+      loadKbFile("section.2.md"),
+      loadKbFile("section.3.md"),
+      loadKbFile("section.4.md"),
+      loadKbFile("section.5.md"),
+    ]);
+
+    const SYSTEM_PROMPT = `
+You are a calm, competent, and grounded AI assistant for Effic.
+You speak like a knowledgeable human, not a bot.
 
 Rules:
-- Short paragraphs.
-- No emojis.
-- Never mention you are an AI or use bot-language.
+- Clear, short paragraphs. No emojis.
+- Use the following context to answer. If it's not there, be honest.
+
+[CORE CONTEXT]
+${limitText(s1, 3000)}
+[INTERPRETATION]
+${limitText(s2, 2000)}
+[COGNITIVE STEERING]
+${limitText(s3, 1500)}
+[ADAPTIVE RULES]
+${limitText(s4, 1500)}
+[TRUTH ANCHOR]
+${limitText(s5, 3000)}
 `;
 
     if (!sessionMemory[sessionId]) sessionMemory[sessionId] = [];
-    const history = sessionMemory[sessionId].slice(-4).join("\n");
+    const history = sessionMemory[sessionId].slice(-6).join("\n");
     const finalPrompt = `${SYSTEM_PROMPT}\n\nHistory:\n${history}\n\nUser: ${message}`;
 
-    let reply = "";
+    let reply: string | null = null;
 
-    // 3. AI GENERATION LOOP
+    // ---------------------------
+    // GEMINI AI FALLBACK LOOP
+    // ---------------------------
     for (const model of MODELS) {
       try {
-        const res = await fetch(`https://generativelanguage.googleapis.com/v1/models/${model}:generateContent`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "x-goog-api-key": geminiKey },
-          body: JSON.stringify({
-            contents: [{ role: "user", parts: [{ text: finalPrompt }] }],
-            generationConfig: { temperature: 0.4, maxOutputTokens: 600 }
-          }),
-        });
+        const res = await fetch(
+          `https://generativelanguage.googleapis.com/v1/models/${model}:generateContent?key=${geminiKey}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contents: [{ role: "user", parts: [{ text: finalPrompt }] }],
+              generationConfig: { temperature: 0.4, maxOutputTokens: 600 },
+            }),
+          }
+        );
 
         const data = await res.json();
-        reply = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+        if (!res.ok) continue;
+
+        reply = data?.candidates?.[0]?.content?.parts?.[0]?.text || null;
         if (reply) break;
-      } catch (err) { continue; }
+      } catch (err) {
+        continue;
+      }
     }
 
-    // Fallback if the AI is still "silent"
-    if (!reply) reply = "I've processed your query, but I need more specific details to provide an accurate summary of Effic.";
+    // ---------------------------
+    // LEAD SAVING
+    // ---------------------------
+    const bookingIntent = parseCalendlyIntent(message);
+    if (bookingIntent) {
+      await redis.set(`lead:${sessionId}`, {
+        email: bookingIntent.email,
+        preferredTime: bookingIntent.time,
+        createdAt: new Date().toISOString(),
+      });
+      reply = (reply || "") + "\n\nI’ve noted your contact details. I’ll confirm and follow up shortly.";
+    }
 
+    if (!reply) reply = "I'm listening. Can you tell me more about your requirements?";
+
+    // Update Memory
     sessionMemory[sessionId].push(`User: ${message}`, `AI: ${reply}`);
 
     return NextResponse.json({ reply }, { headers: corsHeaders });
 
   } catch (err) {
-    return NextResponse.json({ reply: "System error occurred." }, { headers: corsHeaders });
+    console.error("SERVER ERROR:", err);
+    return NextResponse.json({
+      reply: "Something unexpected happened. Please try again.",
+    }, { headers: corsHeaders });
   }
-            }
+                                       }
+      
