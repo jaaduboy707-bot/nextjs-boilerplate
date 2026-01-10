@@ -85,7 +85,7 @@ export async function POST(req: Request) {
     // LOAD KNOWLEDGE BASE (FIXED PATHS)
     // ---------------------------
     // Use path.join with separate segments to ensure compatibility
-    const kbDir = path.join(process.cwd(), "data", "kb");
+    const kbDir = path.join(process.cwd(), "data/kb");
     
     const loadKbFile = async (fileName: string) => {
         try {
@@ -184,5 +184,4 @@ ${limitText(s5, 3000)}
       reply: "Something unexpected happened. Please try again.",
     }, { headers: corsHeaders });
   }
-                                       }
-      
+}
