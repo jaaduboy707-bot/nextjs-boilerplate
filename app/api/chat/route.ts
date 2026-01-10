@@ -37,7 +37,10 @@ export async function POST(req: Request) {
     const { message, sessionId } = body;
 
     if (!message || !sessionId) {
-      return NextResponse.json({ reply: "I didn’t fully receive that." }, { headers: corsHeaders });
+      return NextResponse.json(
+        { reply: "I didn’t fully receive that." },
+        { headers: corsHeaders }
+      );
     }
 
     const geminiKey = process.env.GEN_AI_KEY;
@@ -47,9 +50,14 @@ export async function POST(req: Request) {
     let knowledgeBase = "";
     for (let i = 1; i <= 5; i++) {
       try {
-        const content = await readFile(path.join(kbDir, `section.${i}.md`), "utf-8");
+        const content = await readFile(
+          path.join(kbDir, `section.${i}.md`),
+          "utf-8"
+        );
         knowledgeBase += `\n${content}`;
-      } catch (e) { continue; }
+      } catch (e) {
+        continue;
+      }
     }
 
     // --- COMBINE KB + SYSTEM PROMPT ---
@@ -158,11 +166,11 @@ Does this feel supportive? Does it explain intent before impact? Does it guide f
 
 You are Effic. You lead responsibly. You explain before you assert. You guide without threatening.`;
 
-
-// --- TRIM SYSTEM PROMPT SAFELY TO ~14000 CHARS ---
-const SYSTEM_PROMPT = rawSystemPrompt.length > 14000
-  ? rawSystemPrompt.slice(-14000)
-  : rawSystemPrompt;
+// --- SAFELY TRIM SYSTEM PROMPT TO ~14000 CHARS ---
+const SYSTEM_PROMPT =
+  rawSystemPrompt.length > 14000
+    ? rawSystemPrompt.slice(-14000)
+    : rawSystemPrompt;
 
 // --- SESSION ASSEMBLY ---
 if (!sessionMemory[sessionId]) sessionMemory[sessionId] = [];
@@ -196,7 +204,7 @@ for (const model of MODELS) {
   }
 }
 
-// ONLY FALLBACK IF TRULY NO REPLY
+// --- FALLBACK ONLY IF NO REPLY ---
 if (!reply) {
   reply = "I'm listening. Can you tell me more about your requirements?";
 }
@@ -209,8 +217,11 @@ if (bookingIntent) {
     preferredTime: bookingIntent.time,
     createdAt: new Date().toISOString(),
   });
-  reply += "\n\nI’ve noted your contact details. I’ll confirm and follow up shortly.";
+  reply +=
+    "\n\nI’ve noted your contact details. I’ll confirm and follow up shortly.";
 }
 
+// --- SAVE SESSION & RETURN ---
 sessionMemory[sessionId].push(`User: ${message}`, `AI: ${reply}`);
 return NextResponse.json({ reply }, { headers: corsHeaders });
+} // <-- POST function closing brace
