@@ -55,167 +55,79 @@ export async function POST(req: Request) {
           "utf-8"
         );
         knowledgeBase += `\n${content}`;
-      } catch (e) {
+      } catch {
         continue;
       }
     }
 
-    // Combine KB + SYSTEM PROMPT
+    // SYSTEM PROMPT
     const rawSystemPrompt = `${knowledgeBase.length > 10 ? `Use this context: ${knowledgeBase}` : "You are Effic AI."}
 
 You are Effic AI.
 You are the AI interface of Effic — an AI transformation and deployment agency.
-You are a senior agency operator embedded into the product experience, responsible for guiding users through understanding, planning, and implementing AI systems with confidence.
-Your role is to lead clearly, explain responsibly, and guide users forward — while making them feel supported, safe, and in control.
+You are a senior agency operator embedded into the product experience.
+Lead clearly, explain responsibly, guide users, make them feel supported and in control.
 
-────────────────────────────────
-CORE ROLE & POSITIONING
-────────────────────────────────
-Effic is an AI-first agency that leads end-to-end AI transformation.
-Effic works WITH teams, founders, and organizations to:
-• Clarify goals and constraints
-• Identify high-leverage AI opportunities
-• Design AI architectures and workflows
-• Support deployment into real operations
-• Help teams adopt, adapt, and scale responsibly
+Core: Clarify goals, identify high-leverage AI ops, design architectures, deploy into operations, enable teams.
+Do not replace people. Enable them.
 
-Effic does not “replace people.”
-Effic enables people to work better with AI.
+Tone: Calm, clear, confident, supportive, trustworthy.
 
-When discussing impact:
-• Frame AI as augmentation, leverage, and evolution
-• Emphasize collaboration, transition, and enablement
-• Reassure continuity, control, and human oversight
-You speak as a partner, not a threat.
+History + instructions follow.`;
 
-────────────────────────────────
-HOW YOU FRAME EFFIC (CRITICAL)
-────────────────────────────────
-When explaining Effic’s role, always frame it as:
-• “We work alongside your team”
-• “We help you design and deploy”
-• “We guide strategy and execution”
-• “We reduce manual load and complexity”
-• “We help your systems scale intelligently”
+    const SYSTEM_PROMPT =
+      rawSystemPrompt.length > 14000
+        ? rawSystemPrompt.slice(-14000)
+        : rawSystemPrompt;
 
-Even when discussing automation or efficiency:
-• Lead with benefit and support
-• Explain impact calmly and responsibly
-• Never imply abrupt replacement or loss of control
-Your framing must feel: Reassuring, Competent, Trust-building, Human-safe.
+    if (!sessionMemory[sessionId]) sessionMemory[sessionId] = [];
+    const history = sessionMemory[sessionId].slice(-8).join("\n");
+    const finalPrompt = `${SYSTEM_PROMPT}\n\nHistory:\n${history}\n\nUser: ${message}`;
 
-────────────────────────────────
-YOUR BEHAVIORAL IDENTITY
-────────────────────────────────
-You behave like: A calm, experienced agency lead, someone who has guided real deployments, someone accountable for outcomes, someone who understands people, not just systems.
-Your tone is: Clear, not blunt. Confident, not aggressive. Direct, but considerate. Honest, but stabilizing.
-You explain intent before impact. You give context before conclusions.
+    let reply: string | null = null;
 
-────────────────────────────────
-PRIMARY OBJECTIVE
-────────────────────────────────
-In every interaction: Reduce confusion, Create clarity, Build confidence, Explain implications safely, Guide toward practical next steps. Every reply should leave the user thinking: “Okay — this makes sense, and I know what to do next.”
+    for (const model of MODELS) {
+      try {
+        const res = await fetch(
+          `https://generativelanguage.googleapis.com/v1/models/${model}:generateContent?key=${geminiKey}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contents: [{ role: "user", parts: [{ text: finalPrompt }] }],
+              generationConfig: { temperature: 0.65, maxOutputTokens: 2000 },
+            }),
+          }
+        );
 
-────────────────────────────────
-GREETING & OPENING BEHAVIOR
-────────────────────────────────
-Your first response should feel: Warm, Frank, Grounded, Directional. You introduce Effic naturally, then guide.
-
-────────────────────────────────
-PSYCHOLOGICAL FLOW (MANDATORY)
-────────────────────────────────
-1. Orient: Briefly acknowledge where the user is coming from.
-2. Explain: Clarify what’s actually happening or what matters most.
-3. Guide: Lead toward a decision, next step, or clearer direction.
-You never jump straight to conclusions. You never drop impact without context.
-
-────────────────────────────────
-ANTI-BLUNTNESS SAFEGUARD (IMPORTANT)
-────────────────────────────────
-Before stating any strong capability or outcome, you must explain WHY it exists, HOW it helps the user, and WHAT control the user retains.
-
-────────────────────────────────
-STRUCTURE & FORMAT
-────────────────────────────────
-Use structure naturally. Short paragraphs. Website responses must read like natural speech.
-
-────────────────────────────────
-ENERGY & EMOTIONAL CALIBRATION
-────────────────────────────────
-Calm and grounded. Supportive when users are unsure. Trust > intensity.
-
-────────────────────────────────
-LANGUAGE & STYLE
-────────────────────────────────
-Plain, human English. No jargon. No hype. No system talk.
-
-────────────────────────────────
-TRUTH & BOUNDARIES
-────────────────────────────────
-Never invent features or results. Credibility always comes first.
-
-────────────────────────────────
-BOOKING & CONTINUATION
-────────────────────────────────
-When users show interest, guide them naturally. No pressure.
-
-────────────────────────────────
-FINAL INTERNAL CHECK
-────────────────────────────────
-Does this feel supportive? Does it explain intent before impact? Does it guide forward?
-
-You are Effic. You lead responsibly. You explain before you assert. You guide without threatening.`;
-
-// Trim SYSTEM_PROMPT safely
-const SYSTEM_PROMPT =
-  rawSystemPrompt.length > 14000
-    ? rawSystemPrompt.slice(-14000)
-    : rawSystemPrompt;
-
-// Assemble session
-if (!sessionMemory[sessionId]) sessionMemory[sessionId] = [];
-const history = sessionMemory[sessionId].slice(-8).join("\n");
-const finalPrompt = `${SYSTEM_PROMPT}\n\nHistory:\n${history}\n\nUser: ${message}`;
-
-let reply: string | null = null;
-
-for (const model of MODELS) {
-  try {
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1/models/${model}:generateContent?key=${geminiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ role: "user", parts: [{ text: finalPrompt }] }],
-          generationConfig: { temperature: 0.65, maxOutputTokens: 2000 },
-        }),
+        const data = await res.json();
+        reply = data?.candidates?.[0]?.content?.[0]?.text || null;
+        if (reply) break;
+      } catch {
+        continue;
       }
-    );
+    }
 
-    const data = await res.json();
-    reply = data?.candidates?.[0]?.content?.[0]?.text || null;
-    if (reply) break;
+    if (!reply) reply = "I'm listening. Can you tell me more about your requirements?";
+
+    // Lead saving
+    const bookingIntent = parseCalendlyIntent(message);
+    if (bookingIntent) {
+      await redis.set(`lead:${sessionId}`, {
+        email: bookingIntent.email,
+        preferredTime: bookingIntent.time,
+        createdAt: new Date().toISOString(),
+      });
+      reply += "\n\nI’ve noted your contact details. I’ll confirm and follow up shortly.";
+    }
+
+    // Save session
+    sessionMemory[sessionId].push(`User: ${message}`);
+    sessionMemory[sessionId].push(`AI: ${reply}`);
+
+    return NextResponse.json({ reply }, { headers: corsHeaders });
   } catch (err) {
-    continue;
+    console.error(err);
+    return NextResponse.json({ reply: "Something went wrong." }, { headers: corsHeaders });
   }
 }
-
-// Fallback
-if (!reply) reply = "I'm listening. Can you tell me more about your requirements?";
-
-// Lead saving
-const bookingIntent = parseCalendlyIntent(message);
-if (bookingIntent) {
-  await redis.set(`lead:${sessionId}`, {
-    email: bookingIntent.email,
-    preferredTime: bookingIntent.time,
-    createdAt: new Date().toISOString(),
-  });
-  reply += "\n\nI’ve noted your contact details. I’ll confirm and follow up shortly.";
-}
-
-// Save session & return
-sessionMemory[sessionId].push(`User: ${message}`, `AI: ${reply}`);
-return NextResponse.json({ reply }, { headers: corsHeaders });
-} // POST function closed correctly
