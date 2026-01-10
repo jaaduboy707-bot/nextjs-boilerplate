@@ -6,15 +6,15 @@ import { Redis } from "@upstash/redis";
 // ---------------------------
 // UPSTASH REDIS INIT
 // ---------------------------
-const redis = Redis.fromEnv(); // UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN
+const redis = Redis.fromEnv(); // uses UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN
 
 // ---------------------------
 // CORS HEADERS & OPTIONS
 // ---------------------------
 const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Origin": "*", // replace * with your frontend domain in prod
   "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, x-goog-api-key, x-endpoint-key",
+  "Access-Control-Allow-Headers": "Content-Type, x-endpoint-key",
 };
 
 export async function OPTIONS() {
@@ -25,11 +25,11 @@ export async function OPTIONS() {
 // MODEL PRIORITY
 // ---------------------------
 const MODELS = [
-  "gemini-2.0-pro-exp-02-05",
+  "gemini-2.5-pro",
+  "gemini-2.5-flash",
   "gemini-2.0-flash",
   "gemini-2.0-flash-lite-preview-02-05",
   "gemini-1.5-pro",
-  "gemini-1.5-flash",
 ];
 
 // ---------------------------
@@ -70,7 +70,10 @@ export async function POST(req: Request) {
     // ---------------------------
     const endpointKey = req.headers.get("x-endpoint-key");
     if (!endpointKey || endpointKey !== process.env.ENDPOINT_SECRET) {
-      return NextResponse.json({ reply: "Unauthorized" }, { status: 401, headers: corsHeaders });
+      return NextResponse.json(
+        { reply: "Unauthorized" },
+        { status: 401, headers: corsHeaders }
+      );
     }
 
     if (!message || !sessionId) {
@@ -153,7 +156,8 @@ Rules:
 
         reply = data?.candidates?.[0]?.content?.parts?.[0]?.text || null;
         if (reply) break;
-      } catch {
+      } catch (err) {
+        console.error(`Error calling Gemini model ${model}:`, err);
         continue;
       }
     }
@@ -178,6 +182,9 @@ Rules:
       reply = "I'm listening. Can you tell me more about your requirements?";
     }
 
+    // ---------------------------
+    // UPDATE MEMORY
+    // ---------------------------
     sessionMemory[sessionId].push(`User: ${message}`, `AI: ${reply}`);
 
     return NextResponse.json({ reply }, { headers: corsHeaders });
@@ -188,4 +195,4 @@ Rules:
       { headers: corsHeaders }
     );
   }
-  }
+}
