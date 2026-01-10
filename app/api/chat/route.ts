@@ -75,9 +75,15 @@ export async function POST(req: Request) {
     // --- DEBUGGING BLOCK ---
     const geminiKey = process.env.GEN_AI_KEY;
     if (!geminiKey) {
-      const availableEnvKeys = Object.keys(process.env).filter(k => k.includes("KEY") || k.includes("AI"));
+      const availableEnvKeys = Object.keys(process.env).filter(
+        k => k.includes("KEY") || k.includes("AI")
+      );
       return NextResponse.json(
-        { reply: `Configuration error: GEN_AI_KEY missing. Vercel sees these keys: ${availableEnvKeys.join(", ") || "none"}` },
+        {
+          reply: `Configuration error: GEN_AI_KEY missing. Vercel sees these keys: ${
+            availableEnvKeys.join(", ") || "none"
+          }`,
+        },
         { headers: corsHeaders }
       );
     }
@@ -175,7 +181,10 @@ Every answer should feel like it came from someone who actually understands the 
             },
             body: JSON.stringify({
               contents: [{ role: "user", parts: [{ text: finalPrompt }] }],
-              generationConfig: { temperature: 0.4, maxOutputTokens: 600 },
+              generationConfig: {
+                temperature: 0.65,
+                maxOutputTokens: 1200,
+              },
             }),
           }
         );
