@@ -5,6 +5,7 @@ import { Redis } from "@upstash/redis";
 
 const redis = Redis.fromEnv();
 
+// CORS headers
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
@@ -15,10 +16,25 @@ export async function OPTIONS() {
   return new NextResponse(null, { status: 204, headers: corsHeaders });
 }
 
-const MODELS = ["gemini-2.5-pro", "gemini-2.5-flash"];
-const MAX_PROMPT_CHARS = 14000; // Safe chunk to avoid token overflow
-const sessionMemory: Record<string, string[]> = {};
+// Models & API keys rotation
+const MODELS = [
+  "gemini-2.5-pro",
+  "gemini-2.5-flash",
+  "gemini-2.0-flash",
+  "gemini-1.5-pro",
+];
+const API_KEYS = [
+  process.env.GEN_AI_KEY_1,
+  process.env.GEN_AI_KEY_2,
+  process.env.GEN_AI_KEY_3,
+];
 
+// Session memory & trial limits
+const sessionMemory: Record<string, string[]> = {};
+const sessionUsage: Record<string, number> = {};
+const MAX_TRIAL_MESSAGES = 20; // trial limit per session
+
+// Parse Calendly-like booking info
 function parseCalendlyIntent(message: string) {
   const email = message.match(/[\w._%+-]+@[\w.-]+\.[a-zA-Z]{2,}/)?.[0];
   const time = message.match(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/)?.[0];
@@ -38,15 +54,25 @@ export async function POST(req: Request) {
       );
     }
 
-    const geminiKey = process.env.GEN_AI_KEY;
-    if (!geminiKey) {
+    // Initialize session usage
+    if (!sessionMemory[sessionId]) sessionMemory[sessionId] = [];
+    if (!sessionUsage[sessionId]) sessionUsage[sessionId] = 0;
+
+    // Trial limit check
+    if (sessionUsage[sessionId] >= MAX_TRIAL_MESSAGES) {
       return NextResponse.json(
-        { reply: "Configuration issue: AI key missing." },
+        {
+          reply:
+            "Your trial ends! Reach out to us clearly to move forward or explore our website for distilled info.",
+        },
         { headers: corsHeaders }
       );
     }
 
-    // Load KB safely
+    // Increment trial usage
+    sessionUsage[sessionId]++;
+
+    // Load KB
     const kbDir = path.join(process.cwd(), "data/kb");
     let knowledgeBase = "";
     for (let i = 1; i <= 5; i++) {
@@ -61,9 +87,8 @@ export async function POST(req: Request) {
       }
     }
 
-    // SYSTEM PROMPT
-    let rawSystemPrompt = `
-${knowledgeBase.length > 10 ? `Use this context: ${knowledgeBase}` : "You are Effic AI."}
+    // System prompt
+    const rawSystemPrompt = `${knowledgeBase.length > 10 ? `Use this context: ${knowledgeBase}` : "You are Effic AI."}
 
 You are Effic AI.
 You are the AI interface of Effic — an AI transformation and deployment agency.
@@ -74,79 +99,75 @@ Core: Clarify goals, identify high-leverage AI ops, design architectures, deploy
 Do not replace people. Enable them.
 
 Tone: Calm, clear, confident, supportive, trustworthy.
-History + instructions follow.
-`;
 
-    // Trim if too long
-    if (rawSystemPrompt.length > MAX_PROMPT_CHARS) {
-      rawSystemPrompt = rawSystemPrompt.slice(-MAX_PROMPT_CHARS);
-    }
+History + instructions follow.`;
 
-    // Initialize session memory
-    if (!sessionMemory[sessionId]) sessionMemory[sessionId] = [];
-    const historyChunk = sessionMemory[sessionId].slice(-8).join("\n");
-    const finalPrompt = `${rawSystemPrompt}\n\nHistory:\n${historyChunk}\n\nUser: ${message}`;
+    const SYSTEM_PROMPT =
+      rawSystemPrompt.length > 14000
+        ? rawSystemPrompt.slice(-14000)
+        : rawSystemPrompt;
+
+    const history = sessionMemory[sessionId].slice(-8).join("\n");
+    const finalPrompt = `${SYSTEM_PROMPT}\n\nHistory:\n${history}\n\nUser: ${message}`;
 
     let reply: string | null = null;
 
-    for (const model of MODELS) {
-      try {
-        const res = await fetch(
-          `https://generativelanguage.googleapis.com/v1/models/${model}:generateContent?key=${geminiKey}`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              contents: [{ role: "user", parts: [{ text: finalPrompt }] }],
-              generationConfig: { temperature: 0.65, maxOutputTokens: 2000 },
-            }),
-          }
-        );
+    // Loop through models and API keys
+    outer: for (const key of API_KEYS) {
+      for (const model of MODELS) {
+        try {
+          const res = await fetch(
+            `https://generativelanguage.googleapis.com/v1/models/${model}:generateContent?key=${key}`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                contents: [{ role: "user", parts: [{ text: finalPrompt }] }],
+                generationConfig: { temperature: 0.65, maxOutputTokens: 2000 },
+              }),
+            }
+          );
 
-        const data = await res.json();
-        const candidate = data?.candidates?.[0]?.content?.[0]?.text?.trim() || null;
-
-        if (candidate && candidate.length > 10) {
-          reply = candidate;
-          break;
+          const data = await res.json();
+          reply = data?.candidates?.[0]?.content?.[0]?.text || null;
+          if (reply) break outer;
+        } catch {
+          continue;
         }
-      } catch (err) {
-        console.error("Model request error:", err);
-        continue;
       }
     }
 
-    // Final fallback if nothing returned
+    // Final fallback
     if (!reply) {
       reply =
-        "Your trial ends! Reach out to us clearly to move forward or explore our website for distilled info!";
+        "Your trial ends! Reach out to us clearly to move forward or explore our website for distilled info.";
     }
 
-    // Lead parsing & saving
+    // Save booking intent if found
     const bookingIntent = parseCalendlyIntent(message);
     if (bookingIntent) {
-      try {
-        await redis.set(`lead:${sessionId}`, {
-          email: bookingIntent.email,
-          preferredTime: bookingIntent.time,
-          createdAt: new Date().toISOString(),
-        });
-        reply += "\n\nI’ve noted your contact details. I’ll confirm and follow up shortly.";
-      } catch (err) {
-        console.error("Lead saving failed:", err);
-      }
+      await redis.set(`lead:${sessionId}`, {
+        email: bookingIntent.email,
+        preferredTime: bookingIntent.time,
+        createdAt: new Date().toISOString(),
+      });
+      reply +=
+        "\n\nI’ve noted your contact details. I’ll confirm and follow up shortly.";
     }
 
-    // Save session AFTER reply is confirmed
+    // Save session history
     sessionMemory[sessionId].push(`User: ${message}`);
     sessionMemory[sessionId].push(`AI: ${reply}`);
 
     return NextResponse.json({ reply }, { headers: corsHeaders });
   } catch (err) {
-    console.error("POST error:", err);
+    console.error(err);
     return NextResponse.json(
-      { reply: "Your trial ends! Reach out to us clearly to move forward or explore our website for distilled info!" },
+      {
+        reply:
+          "Your trial ends! Reach out to us clearly to move forward or explore our website for distilled info.",
+      },
       { headers: corsHeaders }
     );
   }
-                                 }
+    }
