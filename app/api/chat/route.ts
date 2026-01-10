@@ -52,12 +52,8 @@ export async function POST(req: Request) {
       } catch (e) { continue; }
     }
 
-    const contextPrompt = knowledgeBase.length > 10 
-      ? `Use this context: ${knowledgeBase.slice(0, 15000)}` 
-      : "You are Effic AI.";
-
-    // --- SYSTEM PROMPT (FIXED INJECTION) ---
-    const SYSTEM_PROMPT = `${contextPrompt}
+    // --- COMBINE KB + SYSTEM PROMPT ---
+    const rawSystemPrompt = `${knowledgeBase.length > 10 ? `Use this context: ${knowledgeBase}` : "You are Effic AI."}
 
 You are Effic AI.
 You are the AI interface of Effic — an AI transformation and deployment agency.
@@ -162,47 +158,59 @@ Does this feel supportive? Does it explain intent before impact? Does it guide f
 
 You are Effic. You lead responsibly. You explain before you assert. You guide without threatening.`;
 
-    // --- SESSION ASSEMBLY ---
-    if (!sessionMemory[sessionId]) sessionMemory[sessionId] = [];
-    const history = sessionMemory[sessionId].slice(-8).join("\n");
-    const finalPrompt = `${SYSTEM_PROMPT}\n\nHistory:\n${history}\n\nUser: ${message}`;
 
-    let reply: string | null = null;
+// --- TRIM SYSTEM PROMPT SAFELY TO ~14000 CHARS ---
+const SYSTEM_PROMPT = rawSystemPrompt.length > 14000
+  ? rawSystemPrompt.slice(-14000)
+  : rawSystemPrompt;
 
-    for (const model of MODELS) {
-      try {
-        const res = await fetch(`https://generativelanguage.googleapis.com/v1/models/${model}:generateContent?key=${geminiKey}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents: [{ role: "user", parts: [{ text: finalPrompt }] }],
-            generationConfig: { temperature: 0.65, maxOutputTokens: 2000 },
-          }),
-        });
+// --- SESSION ASSEMBLY ---
+if (!sessionMemory[sessionId]) sessionMemory[sessionId] = [];
+const history = sessionMemory[sessionId].slice(-8).join("\n");
+const finalPrompt = `${SYSTEM_PROMPT}\n\nHistory:\n${history}\n\nUser: ${message}`;
 
-        const data = await res.json();
-        reply = data?.candidates?.[0]?.content?.parts?.[0]?.text || null;
-        if (reply) break;
-      } catch (err) { continue; }
-    }
+let reply: string | null = null;
 
-    if (!reply) reply = "I'm listening. Can you tell me more about your requirements?";
+for (const model of MODELS) {
+  try {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1/models/${model}:generateContent?key=${geminiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ role: "user", parts: [{ text: finalPrompt }] }],
+          generationConfig: { temperature: 0.65, maxOutputTokens: 2000 },
+        }),
+      }
+    );
 
-    // --- LEAD SAVING ---
-    const bookingIntent = parseCalendlyIntent(message);
-    if (bookingIntent) {
-      await redis.set(`lead:${sessionId}`, {
-        email: bookingIntent.email,
-        preferredTime: bookingIntent.time,
-        createdAt: new Date().toISOString(),
-      });
-      reply += "\n\nI’ve noted your contact details. I’ll confirm and follow up shortly.";
-    }
+    const data = await res.json();
+    console.log("Gemini response:", data);
 
-    sessionMemory[sessionId].push(`User: ${message}`, `AI: ${reply}`);
-    return NextResponse.json({ reply }, { headers: corsHeaders });
-
+    reply = data?.candidates?.[0]?.content?.[0]?.text || null;
+    if (reply) break;
   } catch (err) {
-    return NextResponse.json({ reply: "Something went wrong." }, { headers: corsHeaders });
+    console.error("Model fetch error:", err);
+    continue;
   }
 }
+
+// ONLY FALLBACK IF TRULY NO REPLY
+if (!reply) {
+  reply = "I'm listening. Can you tell me more about your requirements?";
+}
+
+// --- LEAD SAVING ---
+const bookingIntent = parseCalendlyIntent(message);
+if (bookingIntent) {
+  await redis.set(`lead:${sessionId}`, {
+    email: bookingIntent.email,
+    preferredTime: bookingIntent.time,
+    createdAt: new Date().toISOString(),
+  });
+  reply += "\n\nI’ve noted your contact details. I’ll confirm and follow up shortly.";
+}
+
+sessionMemory[sessionId].push(`User: ${message}`, `AI: ${reply}`);
+return NextResponse.json({ reply }, { headers: corsHeaders });
