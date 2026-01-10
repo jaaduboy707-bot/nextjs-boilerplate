@@ -38,14 +38,21 @@ export async function POST(req: Request) {
 
     if (!message || !sessionId) {
       return NextResponse.json(
-        { reply: "I didn’t fully receive that." },
+        { reply: "I didn’t fully receive that. Could you try again?" },
         { headers: corsHeaders }
       );
     }
 
     const geminiKey = process.env.GEN_AI_KEY;
+    if (!geminiKey) {
+      console.error("GEN_AI_KEY missing");
+      return NextResponse.json(
+        { reply: "Server configuration error. Please try later." },
+        { headers: corsHeaders }
+      );
+    }
 
-    // Load KB
+    // Load Knowledge Base
     const kbDir = path.join(process.cwd(), "data/kb");
     let knowledgeBase = "";
     for (let i = 1; i <= 5; i++) {
@@ -63,8 +70,7 @@ export async function POST(req: Request) {
     // SYSTEM PROMPT
     const rawSystemPrompt = `${knowledgeBase.length > 10 ? `Use this context: ${knowledgeBase}` : "You are Effic AI."}
 
-You are Effic AI.
-You are the AI interface of Effic — an AI transformation and deployment agency.
+You are Effic AI, the AI interface of Effic — an AI transformation and deployment agency.
 You are a senior agency operator embedded into the product experience.
 Lead clearly, explain responsibly, guide users, make them feel supported and in control.
 
@@ -75,17 +81,20 @@ Tone: Calm, clear, confident, supportive, trustworthy.
 
 History + instructions follow.`;
 
+    // Limit system prompt to last 14k chars for API stability
     const SYSTEM_PROMPT =
       rawSystemPrompt.length > 14000
         ? rawSystemPrompt.slice(-14000)
         : rawSystemPrompt;
 
+    // Initialize session memory
     if (!sessionMemory[sessionId]) sessionMemory[sessionId] = [];
     const history = sessionMemory[sessionId].slice(-8).join("\n");
     const finalPrompt = `${SYSTEM_PROMPT}\n\nHistory:\n${history}\n\nUser: ${message}`;
 
     let reply: string | null = null;
 
+    // Try each model in order until one gives a reply
     for (const model of MODELS) {
       try {
         const res = await fetch(
@@ -101,33 +110,48 @@ History + instructions follow.`;
         );
 
         const data = await res.json();
-        reply = data?.candidates?.[0]?.content?.[0]?.text || null;
-        if (reply) break;
-      } catch {
+        reply = data?.candidates?.[0]?.content?.[0]?.text?.trim() || null;
+
+        // If a valid reply found, stop trying other models
+        if (reply && reply.length > 5) break;
+      } catch (err) {
+        console.error(`Model ${model} failed`, err);
         continue;
       }
     }
 
-    if (!reply) reply = "I'm listening. Can you tell me more about your requirements?";
-
-    // Lead saving
-    const bookingIntent = parseCalendlyIntent(message);
-    if (bookingIntent) {
-      await redis.set(`lead:${sessionId}`, {
-        email: bookingIntent.email,
-        preferredTime: bookingIntent.time,
-        createdAt: new Date().toISOString(),
-      });
-      reply += "\n\nI’ve noted your contact details. I’ll confirm and follow up shortly.";
+    // Safe fallback
+    if (!reply || reply.length < 5) {
+      reply =
+        "Alright, let’s clarify this together. Can you give me a little more context so I can guide you properly?";
     }
 
-    // Save session
+    // Check and save Calendly intent
+    const bookingIntent = parseCalendlyIntent(message);
+    if (bookingIntent) {
+      try {
+        await redis.set(`lead:${sessionId}`, {
+          email: bookingIntent.email,
+          preferredTime: bookingIntent.time,
+          createdAt: new Date().toISOString(),
+        });
+        reply +=
+          "\n\nI’ve noted your contact details. I’ll confirm and follow up shortly.";
+      } catch (err) {
+        console.error("Error saving lead", err);
+      }
+    }
+
+    // Save session memory
     sessionMemory[sessionId].push(`User: ${message}`);
     sessionMemory[sessionId].push(`AI: ${reply}`);
 
     return NextResponse.json({ reply }, { headers: corsHeaders });
   } catch (err) {
-    console.error(err);
-    return NextResponse.json({ reply: "Something went wrong." }, { headers: corsHeaders });
+    console.error("POST handler error:", err);
+    return NextResponse.json(
+      { reply: "Something went wrong. Try again in a moment." },
+      { headers: corsHeaders }
+    );
   }
-}
+          }
