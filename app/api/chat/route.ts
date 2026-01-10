@@ -12,9 +12,9 @@ const redis = Redis.fromEnv(); // uses UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_RE
 // CORS HEADERS & OPTIONS
 // ---------------------------
 const corsHeaders = {
-  "Access-Control-Allow-Origin": "*", // replace * with your frontend domain in prod
+  "Access-Control-Allow-Origin": "*", // replace * with frontend domain in prod
   "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, x-endpoint-key",
+  "Access-Control-Allow-Headers": "Content-Type",
 };
 
 export async function OPTIONS() {
@@ -64,17 +64,6 @@ export async function POST(req: Request) {
   try {
     const body = await req.json().catch(() => ({}));
     const { message, sessionId } = body;
-
-    // ---------------------------
-    // SIMPLE ENDPOINT AUTH
-    // ---------------------------
-    const endpointKey = req.headers.get("x-endpoint-key");
-    if (!endpointKey || endpointKey !== process.env.ENDPOINT_SECRET) {
-      return NextResponse.json(
-        { reply: "Unauthorized" },
-        { status: 401, headers: corsHeaders }
-      );
-    }
 
     if (!message || !sessionId) {
       return NextResponse.json(
@@ -195,4 +184,4 @@ Rules:
       { headers: corsHeaders }
     );
   }
-}
+  }
