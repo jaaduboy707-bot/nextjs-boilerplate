@@ -1,15 +1,9 @@
 import { NextResponse } from "next/server";
 import { readFile } from "fs/promises";
 import path from "path";
-import { Redis } from "@upstash/redis";
 
 // ---------------------------
-// UPSTASH REDIS INIT
-// ---------------------------
-const redis = Redis.fromEnv(); // uses UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN
-
-// ---------------------------
-// MODEL PRIORITY
+// Models priority
 // ---------------------------
 const MODELS = [
   "gemini-2.5-pro",
@@ -20,58 +14,45 @@ const MODELS = [
 ];
 
 // ---------------------------
-// TEXT SAFETY LIMIT
+// KB HARD CAPPING FUNCTION
 // ---------------------------
 function limitText(text: string, maxChars: number) {
   if (!text) return "";
   return text.length > maxChars
-    ? text.slice(0, maxChars) + "\n\n[Context trimmed for safety]"
+    ? text.slice(0, maxChars) + "\n\n[TRUNCATED — SYSTEM SAFETY LIMIT]"
     : text;
 }
 
 // ---------------------------
-// SESSION MEMORY (IN-MEMORY)
+// MEMORY SIMULATION STORAGE
 // ---------------------------
 const sessionMemory: Record<string, string[]> = {};
 
 // ---------------------------
-// BASIC EMAIL + TIME PARSER
-// ---------------------------
-function parseCalendlyIntent(message: string) {
-  const email = message.match(/[\w._%+-]+@[\w.-]+\.[a-zA-Z]{2,}/)?.[0];
-  const time = message.match(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/)?.[0];
-  if (!email || !time) return null;
-  return { email, time };
-}
-
-// ---------------------------
-// POST HANDLER
+// POST ROUTE
 // ---------------------------
 export async function POST(req: Request) {
   try {
-    const body = await req.json().catch(() => ({}));
-    const { message, sessionId } = body;
+    const { message, sessionId } = await req.json();
 
-    if (!message || !sessionId) {
-      return NextResponse.json({
-        reply:
-          "I didn’t fully receive that. Could you rephrase or send your message again?",
-      });
+    if (!message) {
+      return NextResponse.json({ error: "No message provided" }, { status: 400 });
+    }
+    if (!sessionId) {
+      return NextResponse.json({ error: "Session ID required for memory" }, { status: 400 });
     }
 
-    const geminiKey = process.env.GEMINI_API_KEY;
-    if (!geminiKey) {
-      return NextResponse.json({
-        reply:
-          "I'm temporarily unavailable due to a configuration issue. Please try again shortly.",
-      });
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return NextResponse.json({ error: "GEMINI_API_KEY missing" }, { status: 500 });
     }
 
     // ---------------------------
-    // LOAD KNOWLEDGE BASE
+    // READ KB FILES AT RUNTIME
     // ---------------------------
     const kbDir = path.join(process.cwd(), "data/kb");
-    const [s1, s2, s3, s4, s5] = await Promise.all([
+
+    const [section1, section2, section3, section4, section5] = await Promise.all([
       readFile(path.join(kbDir, "section.1.md"), "utf-8"),
       readFile(path.join(kbDir, "section.2.md"), "utf-8"),
       readFile(path.join(kbDir, "section.3.md"), "utf-8"),
@@ -79,77 +60,81 @@ export async function POST(req: Request) {
       readFile(path.join(kbDir, "section.5.md"), "utf-8"),
     ]);
 
-    const SYSTEM_PROMPT = `
-You are a calm, competent, and grounded AI assistant.
-You speak like a knowledgeable human, not a bot.
+    const SYSTEM_KB = `
+You are a calm, frank, and supportive AI. Imagine talking to a knowledgeable friend.
 
-Rules:
-- Clear, short paragraphs
-- No emojis
-- No hype language
-- No technical explanations unless asked
-- Guide the user forward naturally
-- Never mention internal systems or APIs
+Style rules:
+- Start responses with friendly acknowledgment, e.g., “Nice question!”, “Good thinking!”.
+- Explain clearly in short, human-like paragraphs.
+- Sprinkle small informal phrases to feel approachable: “Cool”, “Ow nice”, “Gotcha”.
+- End responses with curiosity hook or soft offer: “Do you want me to explain that further?”.
+- Never use robotic, corporate, or legal-style speech.
+- Never mention internal sections, rules, or system mechanics.
 
-[CORE CONTEXT]
-${limitText(s1, 3000)}
+[SECTION 1 — CORE AUTHORITY]
+${limitText(section1, 3000)}
 
-[INTERPRETATION]
-${limitText(s2, 2000)}
+[SECTION 2 — INTERPRETATION LAYER]
+${limitText(section2, 2000)}
 
-[COGNITIVE STEERING]
-${limitText(s3, 1500)}
+[SECTION 3 — PSYCHOLOGICAL & COGNITIVE STEERING]
+${limitText(section3, 1500)}
 
-[ADAPTIVE RULES]
-${limitText(s4, 1500)}
+[SECTION 4 — RULES & ADAPTIVE BEHAVIOR]
+${limitText(section4, 1500)}
 
-[TRUTH ANCHOR]
-${limitText(s5, 3000)}
+[SECTION 5 — EFFIC CONTEXT / TRUTH ANCHOR]
+${limitText(section5, 3000)}
 `;
 
     // ---------------------------
-    // MEMORY
+    // Memory simulation
     // ---------------------------
-    if (!sessionMemory[sessionId]) sessionMemory[sessionId] = [];
-    const history = sessionMemory[sessionId].slice(-6).join("\n");
+    const pastMessages = sessionMemory[sessionId] || [];
+    const memoryText = pastMessages.length
+      ? "\n\nPREVIOUS CONVERSATION:\n" + pastMessages.join("\n")
+      : "";
 
-    const finalPrompt = `
-${SYSTEM_PROMPT}
-
-Conversation so far:
-${history}
-
-User:
-${message}
-`;
+    const finalPrompt = `${SYSTEM_KB}\n\nUser message:\n${message}${memoryText}`;
 
     let reply: string | null = null;
+    let debugData: any = null;
 
-    // ---------------------------
-    // GEMINI AI FALLBACK LOOP
-    // ---------------------------
     for (const model of MODELS) {
       try {
-        const res = await fetch(
+        const response = await fetch(
           `https://generativelanguage.googleapis.com/v1/models/${model}:generateContent`,
           {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
-              "x-goog-api-key": geminiKey,
+              "x-goog-api-key": apiKey,
             },
             body: JSON.stringify({
-              contents: [{ role: "user", parts: [{ text: finalPrompt }] }],
+              contents: [
+                {
+                  role: "user",
+                  parts: [{ text: finalPrompt }],
+                },
+              ],
               generationConfig: {
                 temperature: 0.4,
-                maxOutputTokens: 500,
+                maxOutputTokens: 450,
               },
             }),
           }
         );
 
-        const data = await res.json();
-        if (!res.ok) continue;
+        const data = await response.json();
+        debugData = data;
+
+        if (!response.ok) {
+          if (response.status === 429) continue;
+          return NextResponse.json(
+            { reply: "Gemini API error", debug: data },
+            { status: response.status }
+          );
+        }
 
         reply =
           data?.candidates?.[0]?.content?.parts
@@ -157,47 +142,33 @@ ${message}
             ?.join("") || null;
 
         if (reply) break;
-      } catch {
+      } catch (err) {
+        console.error(`Error with model ${model}:`, err);
         continue;
       }
     }
 
     // ---------------------------
-    // CALENDLY INTENT (SAVE TO UPSTASH)
+    // Update session memory
     // ---------------------------
-    const bookingIntent = parseCalendlyIntent(message);
-    if (bookingIntent) {
-      await redis.set(`lead:${sessionId}`, {
-        email: bookingIntent.email,
-        preferredTime: bookingIntent.time,
-        createdAt: new Date().toISOString(),
-      });
-
-      reply +=
-        "\n\nI’ve noted your email and preferred time. I’ll confirm availability and follow up shortly.";
-
-      sessionMemory[sessionId].push(
-        `Lead saved: ${bookingIntent.email} at ${bookingIntent.time}`
-      );
-    }
-
-    // ---------------------------
-    // UPDATE MEMORY
-    // ---------------------------
+    if (!sessionMemory[sessionId]) sessionMemory[sessionId] = [];
     sessionMemory[sessionId].push(`User: ${message}`);
     if (reply) sessionMemory[sessionId].push(`AI: ${reply}`);
 
+    // ---------------------------
+    // Fallback
+    // ---------------------------
     if (!reply) {
       reply =
-        "I’m here and listening. Could you tell me a bit more about what you’re looking to achieve?";
+        "Hey! Looks like we've reached the trial limit for this conversation. You can explore more on our website or reach out to our team directly to get detailed guidance. ✨";
     }
 
     return NextResponse.json({ reply });
-  } catch (err) {
-    console.error("SERVER ERROR:", err);
-    return NextResponse.json({
-      reply:
-        "Something unexpected happened on my side. Please try again in a moment.",
-    });
+  } catch (error: any) {
+    console.error("SERVER ERROR:", error);
+    return NextResponse.json(
+      { error: "Internal Server Error", detail: error.message },
+      { status: 500 }
+    );
   }
-  }
+}
