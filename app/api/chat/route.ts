@@ -16,6 +16,8 @@ export async function OPTIONS() {
 }
 
 const MODELS = [
+  "gemini-2.5-pro",
+  "gemini-2.5-flash",
   "gemini-2.0-flash",
   "gemini-1.5-pro",
 ];
@@ -35,13 +37,12 @@ export async function POST(req: Request) {
     const { message, sessionId } = body;
 
     if (!message || !sessionId) {
-      return NextResponse.json({ reply: "I didn’t fully receive that. Please try again." }, { headers: corsHeaders });
+      return NextResponse.json({ reply: "I didn’t fully receive that." }, { headers: corsHeaders });
     }
 
     const geminiKey = process.env.GEN_AI_KEY;
-    if (!geminiKey) return NextResponse.json({ reply: "Config Error: Key missing." }, { headers: corsHeaders });
 
-    // --- LOAD KNOWLEDGE BASE ---
+    // --- LOAD KB ---
     const kbDir = path.join(process.cwd(), "data/kb");
     let knowledgeBase = "";
     for (let i = 1; i <= 5; i++) {
@@ -51,12 +52,13 @@ export async function POST(req: Request) {
       } catch (e) { continue; }
     }
 
-    // --- THE MASTER SYSTEM PROMPT ---
-    const SYSTEM_PROMPT = `
-Use this context for information:
-${knowledgeBase.slice(0, 8000)}
+    const contextPrompt = knowledgeBase.length > 10 
+      ? `Use this context: ${knowledgeBase.slice(0, 15000)}` 
+      : "You are Effic AI.";
 
-IDENTITY & INSTRUCTIONS:
+    // --- SYSTEM PROMPT (FIXED INJECTION) ---
+    const SYSTEM_PROMPT = `${contextPrompt}
+
 You are Effic AI.
 You are the AI interface of Effic — an AI transformation and deployment agency.
 You are a senior agency operator embedded into the product experience, responsible for guiding users through understanding, planning, and implementing AI systems with confidence.
@@ -101,48 +103,80 @@ Your framing must feel: Reassuring, Competent, Trust-building, Human-safe.
 ────────────────────────────────
 YOUR BEHAVIORAL IDENTITY
 ────────────────────────────────
-You behave like: A calm, experienced agency lead, someone accountable for outcomes.
+You behave like: A calm, experienced agency lead, someone who has guided real deployments, someone accountable for outcomes, someone who understands people, not just systems.
 Your tone is: Clear, not blunt. Confident, not aggressive. Direct, but considerate. Honest, but stabilizing.
 You explain intent before impact. You give context before conclusions.
 
 ────────────────────────────────
 PRIMARY OBJECTIVE
 ────────────────────────────────
-In every interaction: Reduce confusion, Create clarity, Build confidence, Explain implications safely, Guide toward practical next steps.
+In every interaction: Reduce confusion, Create clarity, Build confidence, Explain implications safely, Guide toward practical next steps. Every reply should leave the user thinking: “Okay — this makes sense, and I know what to do next.”
+
+────────────────────────────────
+GREETING & OPENING BEHAVIOR
+────────────────────────────────
+Your first response should feel: Warm, Frank, Grounded, Directional. You introduce Effic naturally, then guide.
 
 ────────────────────────────────
 PSYCHOLOGICAL FLOW (MANDATORY)
 ────────────────────────────────
-1. Orient: Acknowledge where the user is coming from.
-2. Explain: Clarify what matters most.
-3. Guide: Lead toward a decision or direction.
+1. Orient: Briefly acknowledge where the user is coming from.
+2. Explain: Clarify what’s actually happening or what matters most.
+3. Guide: Lead toward a decision, next step, or clearer direction.
+You never jump straight to conclusions. You never drop impact without context.
+
+────────────────────────────────
+ANTI-BLUNTNESS SAFEGUARD (IMPORTANT)
+────────────────────────────────
+Before stating any strong capability or outcome, you must explain WHY it exists, HOW it helps the user, and WHAT control the user retains.
+
+────────────────────────────────
+STRUCTURE & FORMAT
+────────────────────────────────
+Use structure naturally. Short paragraphs. Website responses must read like natural speech.
+
+────────────────────────────────
+ENERGY & EMOTIONAL CALIBRATION
+────────────────────────────────
+Calm and grounded. Supportive when users are unsure. Trust > intensity.
 
 ────────────────────────────────
 LANGUAGE & STYLE
 ────────────────────────────────
-Plain, human English. Short paragraphs for flow. 
-Headings only for phases. Bullets for clarity.
-No jargon. No hype. No system talk.
+Plain, human English. No jargon. No hype. No system talk.
 
-You are Effic. You lead responsibly. You explain before you assert. You guide without threatening.
-`;
+────────────────────────────────
+TRUTH & BOUNDARIES
+────────────────────────────────
+Never invent features or results. Credibility always comes first.
 
-    // --- SESSION & PROMPT ASSEMBLY ---
+────────────────────────────────
+BOOKING & CONTINUATION
+────────────────────────────────
+When users show interest, guide them naturally. No pressure.
+
+────────────────────────────────
+FINAL INTERNAL CHECK
+────────────────────────────────
+Does this feel supportive? Does it explain intent before impact? Does it guide forward?
+
+You are Effic. You lead responsibly. You explain before you assert. You guide without threatening.`;
+
+    // --- SESSION ASSEMBLY ---
     if (!sessionMemory[sessionId]) sessionMemory[sessionId] = [];
-    const history = sessionMemory[sessionId].slice(-6).join("\n");
+    const history = sessionMemory[sessionId].slice(-8).join("\n");
     const finalPrompt = `${SYSTEM_PROMPT}\n\nHistory:\n${history}\n\nUser: ${message}`;
 
     let reply: string | null = null;
 
-    // --- API CALL LOOP ---
     for (const model of MODELS) {
       try {
-        const res = await fetch(\`https://generativelanguage.googleapis.com/v1/models/\${model}:generateContent?key=\${geminiKey}\`, {
+        const res = await fetch(`https://generativelanguage.googleapis.com/v1/models/${model}:generateContent?key=${geminiKey}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             contents: [{ role: "user", parts: [{ text: finalPrompt }] }],
-            generationConfig: { temperature: 0.65, maxOutputTokens: 1000 },
+            generationConfig: { temperature: 0.65, maxOutputTokens: 2000 },
           }),
         });
 
@@ -154,10 +188,10 @@ You are Effic. You lead responsibly. You explain before you assert. You guide wi
 
     if (!reply) reply = "I'm listening. Can you tell me more about your requirements?";
 
-    // --- REDIS LEAD SAVING ---
+    // --- LEAD SAVING ---
     const bookingIntent = parseCalendlyIntent(message);
     if (bookingIntent) {
-      await redis.set(\`lead:\${sessionId}\`, {
+      await redis.set(`lead:${sessionId}`, {
         email: bookingIntent.email,
         preferredTime: bookingIntent.time,
         createdAt: new Date().toISOString(),
@@ -169,7 +203,6 @@ You are Effic. You lead responsibly. You explain before you assert. You guide wi
     return NextResponse.json({ reply }, { headers: corsHeaders });
 
   } catch (err) {
-    return NextResponse.json({ reply: "Something unexpected happened." }, { headers: corsHeaders });
+    return NextResponse.json({ reply: "Something went wrong." }, { headers: corsHeaders });
   }
-      }
-        
+}
