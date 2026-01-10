@@ -8,15 +8,15 @@ import { Redis } from "@upstash/redis";
 // ---------------------------
 const redis = Redis.fromEnv(); 
 
-// ---------------------------
-// CORS BRIDGE (ADDITION ONLY)
-// ---------------------------
+// 1. ADDITION: CORS HEADERS
 const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Origin": "*", // Allows Framer to talk to this API
   "Access-Control-Allow-Methods": "POST, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, x-goog-api-key",
 };
 
+// 2. ADDITION: OPTIONS HANDLER (The "Handshake")
+// This resolves the "Connection Interrupted" by telling the browser it's safe to send data.
 export async function OPTIONS() {
   return new NextResponse(null, {
     status: 204,
@@ -25,7 +25,7 @@ export async function OPTIONS() {
 }
 
 // ---------------------------
-// MODEL PRIORITY (RESTORED)
+// MODEL PRIORITY (UNCHANGED)
 // ---------------------------
 const MODELS = [
   "gemini-2.5-pro",
@@ -35,9 +35,6 @@ const MODELS = [
   "gemini-1.5-flash",
 ];
 
-// ---------------------------
-// TEXT SAFETY LIMIT
-// ---------------------------
 function limitText(text: string, maxChars: number) {
   if (!text) return "";
   return text.length > maxChars
@@ -45,14 +42,8 @@ function limitText(text: string, maxChars: number) {
     : text;
 }
 
-// ---------------------------
-// SESSION MEMORY (IN-MEMORY)
-// ---------------------------
 const sessionMemory: Record<string, string[]> = {};
 
-// ---------------------------
-// BASIC EMAIL + TIME PARSER
-// ---------------------------
 function parseCalendlyIntent(message: string) {
   const email = message.match(/[\w._%+-]+@[\w.-]+\.[a-zA-Z]{2,}/)?.[0];
   const time = message.match(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/)?.[0];
@@ -68,6 +59,7 @@ export async function POST(req: Request) {
     const body = await req.json().catch(() => ({}));
     const { message, sessionId } = body;
 
+    // ADDED corsHeaders to these error returns
     if (!message || !sessionId) {
       return NextResponse.json({
         reply: "I didn’t fully receive that. Could you rephrase or send your message again?",
@@ -82,7 +74,7 @@ export async function POST(req: Request) {
     }
 
     // ---------------------------
-    // LOAD KNOWLEDGE BASE
+    // LOAD KNOWLEDGE BASE (UNCHANGED)
     // ---------------------------
     const kbDir = path.join(process.cwd(), "data/kb");
     const [s1, s2, s3, s4, s5] = await Promise.all([
@@ -121,9 +113,6 @@ ${limitText(s4, 1500)}
 ${limitText(s5, 3000)}
 `;
 
-    // ---------------------------
-    // MEMORY
-    // ---------------------------
     if (!sessionMemory[sessionId]) sessionMemory[sessionId] = [];
     const history = sessionMemory[sessionId].slice(-6).join("\n");
 
@@ -139,9 +128,6 @@ ${message}
 
     let reply: string | null = null;
 
-    // ---------------------------
-    // GEMINI AI FALLBACK LOOP
-    // ---------------------------
     for (const model of MODELS) {
       try {
         const res = await fetch(
@@ -172,9 +158,6 @@ ${message}
       }
     }
 
-    // ---------------------------
-    // CALENDLY INTENT (SAVE TO UPSTASH)
-    // ---------------------------
     const bookingIntent = parseCalendlyIntent(message);
     if (bookingIntent) {
       await redis.set(`lead:${sessionId}`, {
@@ -182,14 +165,10 @@ ${message}
         preferredTime: bookingIntent.time,
         createdAt: new Date().toISOString(),
       });
-
       reply += "\n\nI’ve noted your email and preferred time. I’ll confirm availability and follow up shortly.";
       sessionMemory[sessionId].push(`Lead saved: ${bookingIntent.email} at ${bookingIntent.time}`);
     }
 
-    // ---------------------------
-    // UPDATE MEMORY
-    // ---------------------------
     sessionMemory[sessionId].push(`User: ${message}`);
     if (reply) sessionMemory[sessionId].push(`AI: ${reply}`);
 
@@ -197,6 +176,7 @@ ${message}
       reply = "I’m here and listening. Could you tell me a bit more about what you’re looking to achieve?";
     }
 
+    // 3. FINAL RETURN WITH CORS HEADERS
     return NextResponse.json({ reply }, { headers: corsHeaders });
 
   } catch (err) {
@@ -206,4 +186,3 @@ ${message}
     }, { headers: corsHeaders });
   }
 }
-
