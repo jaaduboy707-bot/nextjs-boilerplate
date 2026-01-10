@@ -1,9 +1,10 @@
-        import { NextResponse } from "next/server";
+        
+import { NextResponse } from "next/server";
 import { readFile } from "fs/promises";
 import path from "path";
 
 // ---------------------------
-// MODELS PRIORITY (UNCHANGED)
+// MODEL PRIORITY
 // ---------------------------
 const MODELS = [
   "gemini-2.5-pro",
@@ -14,75 +15,51 @@ const MODELS = [
 ];
 
 // ---------------------------
-// KB HARD CAPPING FUNCTION
+// TEXT SAFETY LIMIT
 // ---------------------------
 function limitText(text: string, maxChars: number) {
   if (!text) return "";
   return text.length > maxChars
-    ? text.slice(0, maxChars) + "\n\n[TRUNCATED — SYSTEM SAFETY LIMIT]"
+    ? text.slice(0, maxChars) + "\n\n[TRUNCATED FOR SAFETY]"
     : text;
 }
 
 // ---------------------------
-// MEMORY STORAGE
+// MEMORY (TEMP – IN-MEMORY)
 // ---------------------------
 const sessionMemory: Record<string, string[]> = {};
 
 // ---------------------------
-// CORS (FOR FRAMER / UI)
+// CORS (FOR FRAMER / BROWSER)
 // ---------------------------
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, x-internal-token",
+  "Access-Control-Allow-Headers": "Content-Type",
 };
 
 export async function OPTIONS() {
-  return new NextResponse(null, {
-    status: 204,
-    headers: corsHeaders,
-  });
+  return new NextResponse(null, { status: 204, headers: corsHeaders });
 }
 
 // ---------------------------
-// POST ROUTE
+// POST HANDLER
 // ---------------------------
 export async function POST(req: Request) {
   try {
-    // ---------------------------
-    // AUTH GATE (CRITICAL)
-    // ---------------------------
-    const internalToken = req.headers.get("x-internal-token");
-    if (internalToken !== process.env.INTERNAL_API_TOKEN) {
-      return NextResponse.json(
-        { error: "Unauthorized" },
-        { status: 401, headers: corsHeaders }
-      );
-    }
-
     const { message, sessionId } = await req.json();
 
-    if (!message) {
+    if (!message || !sessionId) {
       return NextResponse.json(
-        { error: "No message provided" },
+        { reply: "Message and sessionId are required." },
         { status: 400, headers: corsHeaders }
       );
     }
 
-    if (!sessionId) {
-      return NextResponse.json(
-        { error: "Session ID required for memory" },
-        { status: 400, headers: corsHeaders }
-      );
-    }
-
-    // ---------------------------
-    // GEMINI KEY (RENAMED)
-    // ---------------------------
     const apiKey = process.env.GEN_AI_KEY;
     if (!apiKey) {
       return NextResponse.json(
-        { error: "GEN_AI_KEY missing" },
+        { reply: "GEN_AI_KEY missing in environment variables." },
         { status: 500, headers: corsHeaders }
       );
     }
@@ -90,60 +67,45 @@ export async function POST(req: Request) {
     // ---------------------------
     // LOAD KB FILES
     // ---------------------------
-    const kbDir = path.join(process.cwd(), "data/kb");
+    const kbDir = path.join(process.cwd(), "data", "kb");
 
-    const [section1, section2, section3, section4, section5] =
-      await Promise.all([
-        readFile(path.join(kbDir, "section.1.md"), "utf-8"),
-        readFile(path.join(kbDir, "section.2.md"), "utf-8"),
-        readFile(path.join(kbDir, "section.3.md"), "utf-8"),
-        readFile(path.join(kbDir, "section.4.md"), "utf-8"),
-        readFile(path.join(kbDir, "section.5.md"), "utf-8"),
-      ]);
+    const [s1, s2, s3, s4, s5] = await Promise.all([
+      readFile(path.join(kbDir, "section.1.md"), "utf-8"),
+      readFile(path.join(kbDir, "section.2.md"), "utf-8"),
+      readFile(path.join(kbDir, "section.3.md"), "utf-8"),
+      readFile(path.join(kbDir, "section.4.md"), "utf-8"),
+      readFile(path.join(kbDir, "section.5.md"), "utf-8"),
+    ]);
 
-    const SYSTEM_KB = `
-You are a calm, frank, and supportive AI. Imagine talking to a knowledgeable friend.
+    const SYSTEM_PROMPT = `
+You are a calm, competent, grounded AI assistant.
 
-Style rules:
-- Start responses with friendly acknowledgment.
-- Explain clearly in short, human-like paragraphs.
-- Keep it natural and approachable.
-- Never mention internal systems or mechanics.
+[CORE]
+${limitText(s1, 3000)}
 
-[SECTION 1]
-${limitText(section1, 3000)}
+[INTERPRETATION]
+${limitText(s2, 2000)}
 
-[SECTION 2]
-${limitText(section2, 2000)}
+[STEERING]
+${limitText(s3, 1500)}
 
-[SECTION 3]
-${limitText(section3, 1500)}
+[ADAPTIVE]
+${limitText(s4, 1500)}
 
-[SECTION 4]
-${limitText(section4, 1500)}
-
-[SECTION 5]
-${limitText(section5, 3000)}
+[TRUTH]
+${limitText(s5, 3000)}
 `;
 
-    // ---------------------------
-    // MEMORY
-    // ---------------------------
-    const pastMessages = sessionMemory[sessionId] || [];
-    const memoryText = pastMessages.length
-      ? "\n\nPREVIOUS CONVERSATION:\n" + pastMessages.join("\n")
-      : "";
+    if (!sessionMemory[sessionId]) sessionMemory[sessionId] = [];
+    const history = sessionMemory[sessionId].slice(-6).join("\n");
 
-    const finalPrompt = `${SYSTEM_KB}\n\nUser message:\n${message}${memoryText}`;
+    const finalPrompt = `${SYSTEM_PROMPT}\n\nConversation:\n${history}\n\nUser: ${message}`;
 
     let reply: string | null = null;
 
-    // ---------------------------
-    // GEMINI FALLBACK LOOP (UNCHANGED)
-    // ---------------------------
     for (const model of MODELS) {
       try {
-        const response = await fetch(
+        const res = await fetch(
           `https://generativelanguage.googleapis.com/v1/models/${model}:generateContent`,
           {
             method: "POST",
@@ -155,14 +117,14 @@ ${limitText(section5, 3000)}
               contents: [{ role: "user", parts: [{ text: finalPrompt }] }],
               generationConfig: {
                 temperature: 0.4,
-                maxOutputTokens: 450,
+                maxOutputTokens: 500,
               },
             }),
           }
         );
 
-        const data = await response.json();
-        if (!response.ok) continue;
+        const data = await res.json();
+        if (!res.ok) continue;
 
         reply =
           data?.candidates?.[0]?.content?.parts
@@ -175,23 +137,19 @@ ${limitText(section5, 3000)}
       }
     }
 
-    // ---------------------------
-    // MEMORY UPDATE
-    // ---------------------------
-    if (!sessionMemory[sessionId]) sessionMemory[sessionId] = [];
     sessionMemory[sessionId].push(`User: ${message}`);
     if (reply) sessionMemory[sessionId].push(`AI: ${reply}`);
 
     if (!reply) {
       reply =
-        "Hey — I’m here. Could you tell me a bit more about what you’re trying to achieve?";
+        "I'm here. Could you tell me a bit more about what you're trying to do?";
     }
 
     return NextResponse.json({ reply }, { headers: corsHeaders });
-  } catch (error: any) {
-    console.error("SERVER ERROR:", error);
+  } catch (err) {
+    console.error("SERVER ERROR:", err);
     return NextResponse.json(
-      { error: "Internal Server Error" },
+      { reply: "Server error. Try again shortly." },
       { status: 500, headers: corsHeaders }
     );
   }
