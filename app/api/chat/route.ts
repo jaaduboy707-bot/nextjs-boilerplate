@@ -15,16 +15,10 @@ export async function OPTIONS() {
   return new NextResponse(null, { status: 204, headers: corsHeaders });
 }
 
-const MODELS = [
-  "gemini-2.5-pro",
-  "gemini-2.5-flash",
-  "gemini-2.0-flash",
-  "gemini-1.5-pro",
-];
-
+const MODELS = ["gemini-2.5-pro", "gemini-2.5-flash"];
+const MAX_PROMPT_CHARS = 14000; // Safe chunk to avoid token overflow
 const sessionMemory: Record<string, string[]> = {};
 
-// Extract Calendly booking info
 function parseCalendlyIntent(message: string) {
   const email = message.match(/[\w._%+-]+@[\w.-]+\.[a-zA-Z]{2,}/)?.[0];
   const time = message.match(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/)?.[0];
@@ -39,21 +33,20 @@ export async function POST(req: Request) {
 
     if (!message || !sessionId) {
       return NextResponse.json(
-        { reply: "I didn’t fully receive that. Could you resend?" },
+        { reply: "I didn’t fully receive that." },
         { headers: corsHeaders }
       );
     }
 
     const geminiKey = process.env.GEN_AI_KEY;
     if (!geminiKey) {
-      console.error("GEN_AI_KEY missing in env");
       return NextResponse.json(
-        { reply: "Configuration issue. Please try again later." },
+        { reply: "Configuration issue: AI key missing." },
         { headers: corsHeaders }
       );
     }
 
-    // Load knowledge base
+    // Load KB safely
     const kbDir = path.join(process.cwd(), "data/kb");
     let knowledgeBase = "";
     for (let i = 1; i <= 5; i++) {
@@ -69,13 +62,11 @@ export async function POST(req: Request) {
     }
 
     // SYSTEM PROMPT
-    const rawSystemPrompt = `${
-      knowledgeBase.length > 10
-        ? `Use this context: ${knowledgeBase}`
-        : "You are Effic AI."
-    }
+    let rawSystemPrompt = `
+${knowledgeBase.length > 10 ? `Use this context: ${knowledgeBase}` : "You are Effic AI."}
 
-You are Effic AI, the AI interface of Effic — an AI transformation and deployment agency.
+You are Effic AI.
+You are the AI interface of Effic — an AI transformation and deployment agency.
 You are a senior agency operator embedded into the product experience.
 Lead clearly, explain responsibly, guide users, make them feel supported and in control.
 
@@ -83,21 +74,21 @@ Core: Clarify goals, identify high-leverage AI ops, design architectures, deploy
 Do not replace people. Enable them.
 
 Tone: Calm, clear, confident, supportive, trustworthy.
+History + instructions follow.
+`;
 
-History + instructions follow.`;
+    // Trim if too long
+    if (rawSystemPrompt.length > MAX_PROMPT_CHARS) {
+      rawSystemPrompt = rawSystemPrompt.slice(-MAX_PROMPT_CHARS);
+    }
 
-    const SYSTEM_PROMPT =
-      rawSystemPrompt.length > 14000
-        ? rawSystemPrompt.slice(-14000)
-        : rawSystemPrompt;
-
+    // Initialize session memory
     if (!sessionMemory[sessionId]) sessionMemory[sessionId] = [];
-    const history = sessionMemory[sessionId].slice(-8).join("\n");
-    const finalPrompt = `${SYSTEM_PROMPT}\n\nHistory:\n${history}\n\nUser: ${message}`;
+    const historyChunk = sessionMemory[sessionId].slice(-8).join("\n");
+    const finalPrompt = `${rawSystemPrompt}\n\nHistory:\n${historyChunk}\n\nUser: ${message}`;
 
     let reply: string | null = null;
 
-    // Try models in order
     for (const model of MODELS) {
       try {
         const res = await fetch(
@@ -113,23 +104,25 @@ History + instructions follow.`;
         );
 
         const data = await res.json();
-        reply = data?.candidates?.[0]?.content?.[0]?.text?.trim() || null;
+        const candidate = data?.candidates?.[0]?.content?.[0]?.text?.trim() || null;
 
-        // Only accept a real reply
-        if (reply && reply.length > 10) break;
+        if (candidate && candidate.length > 10) {
+          reply = candidate;
+          break;
+        }
       } catch (err) {
-        console.error(`Model ${model} failed:`, err);
+        console.error("Model request error:", err);
         continue;
       }
     }
 
-    // Safe fallback
+    // Final fallback if nothing returned
     if (!reply) {
       reply =
-        "I didn’t quite get that. Could you clarify a bit so I can guide you effectively?";
+        "Your trial ends! Reach out to us clearly to move forward or explore our website for distilled info!";
     }
 
-    // Parse booking / lead info
+    // Lead parsing & saving
     const bookingIntent = parseCalendlyIntent(message);
     if (bookingIntent) {
       try {
@@ -138,14 +131,13 @@ History + instructions follow.`;
           preferredTime: bookingIntent.time,
           createdAt: new Date().toISOString(),
         });
-        reply +=
-          "\n\nI’ve noted your contact details. I’ll confirm and follow up shortly.";
+        reply += "\n\nI’ve noted your contact details. I’ll confirm and follow up shortly.";
       } catch (err) {
-        console.error("Failed to save lead:", err);
+        console.error("Lead saving failed:", err);
       }
     }
 
-    // Save session memory
+    // Save session AFTER reply is confirmed
     sessionMemory[sessionId].push(`User: ${message}`);
     sessionMemory[sessionId].push(`AI: ${reply}`);
 
@@ -153,8 +145,8 @@ History + instructions follow.`;
   } catch (err) {
     console.error("POST error:", err);
     return NextResponse.json(
-      { reply: "Something went wrong. Please try again." },
+      { reply: "Your trial ends! Reach out to us clearly to move forward or explore our website for distilled info!" },
       { headers: corsHeaders }
     );
   }
-          }
+                                 }
