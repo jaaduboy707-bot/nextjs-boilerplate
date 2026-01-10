@@ -6,7 +6,7 @@ import { Redis } from "@upstash/redis";
 // ---------------------------
 // UPSTASH REDIS INIT
 // ---------------------------
-const redis = Redis.fromEnv(); // uses UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN
+const redis = Redis.fromEnv(); // UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN
 
 // ---------------------------
 // CORS HEADERS & OPTIONS
@@ -18,10 +18,7 @@ const corsHeaders = {
 };
 
 export async function OPTIONS() {
-  return new NextResponse(null, {
-    status: 204,
-    headers: corsHeaders,
-  });
+  return new NextResponse(null, { status: 204, headers: corsHeaders });
 }
 
 // ---------------------------
@@ -69,14 +66,11 @@ export async function POST(req: Request) {
     const { message, sessionId } = body;
 
     // ---------------------------
-    // SIMPLE AUTH CHECK (Protect endpoint)
+    // SIMPLE ENDPOINT AUTH
     // ---------------------------
     const endpointKey = req.headers.get("x-endpoint-key");
     if (!endpointKey || endpointKey !== process.env.ENDPOINT_SECRET) {
-      return NextResponse.json(
-        { reply: "Unauthorized" },
-        { status: 401, headers: corsHeaders }
-      );
+      return NextResponse.json({ reply: "Unauthorized" }, { status: 401, headers: corsHeaders });
     }
 
     if (!message || !sessionId) {
@@ -86,9 +80,6 @@ export async function POST(req: Request) {
       );
     }
 
-    // ---------------------------
-    // USE NEW ENV KEY
-    // ---------------------------
     const geminiKey = process.env.GEN_AI_KEY;
     if (!geminiKey) {
       return NextResponse.json(
@@ -98,46 +89,39 @@ export async function POST(req: Request) {
     }
 
     // ---------------------------
-    // LOAD KNOWLEDGE BASE
+    // LOAD KNOWLEDGE BASE DYNAMICALLY
     // ---------------------------
-    const kbDir = path.join(process.cwd(), "data", "kb");
+    const kbDir = path.join(process.cwd(), "data/kb");
+    let knowledgeBase = "";
 
-    const loadKbFile = async (file: string) => {
+    for (let i = 1; i <= 5; i++) {
       try {
-        return await readFile(path.join(kbDir, file), "utf-8");
+        const filePath = path.join(kbDir, `section.${i}.md`);
+        const content = await readFile(filePath, "utf-8");
+        knowledgeBase += `\n${content}`;
       } catch {
-        return "";
+        console.error(`Missing section.${i}.md at expected path.`);
       }
-    };
+    }
 
-    const [s1, s2, s3, s4, s5] = await Promise.all([
-      loadKbFile("section.1.md"),
-      loadKbFile("section.2.md"),
-      loadKbFile("section.3.md"),
-      loadKbFile("section.4.md"),
-      loadKbFile("section.5.md"),
-    ]);
+    const contextPrompt =
+      knowledgeBase.length > 10
+        ? `Use this context:\n${knowledgeBase.slice(0, 8000)}`
+        : "You are Effic AI. Answer professionally even if context files are missing.";
 
     const SYSTEM_PROMPT = `
-You are a calm, competent, and grounded AI assistant for Effic.
-You speak like a knowledgeable human, not a bot.
+${contextPrompt}
 
 Rules:
-- Clear, short paragraphs. No emojis.
-- Use the following context to answer. If it's not there, be honest.
-
-[CORE CONTEXT]
-${limitText(s1, 3000)}
-[INTERPRETATION]
-${limitText(s2, 2000)}
-[COGNITIVE STEERING]
-${limitText(s3, 1500)}
-[ADAPTIVE RULES]
-${limitText(s4, 1500)}
-[TRUTH ANCHOR]
-${limitText(s5, 3000)}
+- Speak calmly and competently.
+- Short paragraphs only.
+- No emojis.
+- If asked "What is Effic", summarize the mission clearly.
 `;
 
+    // ---------------------------
+    // MEMORY
+    // ---------------------------
     if (!sessionMemory[sessionId]) sessionMemory[sessionId] = [];
     const history = sessionMemory[sessionId].slice(-6).join("\n");
     const finalPrompt = `${SYSTEM_PROMPT}\n\nHistory:\n${history}\n\nUser: ${message}`;
@@ -159,10 +143,7 @@ ${limitText(s5, 3000)}
             },
             body: JSON.stringify({
               contents: [{ role: "user", parts: [{ text: finalPrompt }] }],
-              generationConfig: {
-                temperature: 0.4,
-                maxOutputTokens: 600,
-              },
+              generationConfig: { temperature: 0.4, maxOutputTokens: 600 },
             }),
           }
         );
@@ -187,6 +168,7 @@ ${limitText(s5, 3000)}
         preferredTime: bookingIntent.time,
         createdAt: new Date().toISOString(),
       });
+
       reply =
         (reply || "") +
         "\n\nI’ve noted your contact details. I’ll confirm and follow up shortly.";
@@ -206,4 +188,4 @@ ${limitText(s5, 3000)}
       { headers: corsHeaders }
     );
   }
-       }
+  }
