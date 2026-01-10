@@ -45,7 +45,7 @@ export async function POST(req: Request) {
 
     const geminiKey = process.env.GEN_AI_KEY;
 
-    // --- LOAD KB ---
+    // Load KB
     const kbDir = path.join(process.cwd(), "data/kb");
     let knowledgeBase = "";
     for (let i = 1; i <= 5; i++) {
@@ -60,7 +60,7 @@ export async function POST(req: Request) {
       }
     }
 
-    // --- COMBINE KB + SYSTEM PROMPT ---
+    // Combine KB + SYSTEM PROMPT
     const rawSystemPrompt = `${knowledgeBase.length > 10 ? `Use this context: ${knowledgeBase}` : "You are Effic AI."}
 
 You are Effic AI.
@@ -166,13 +166,13 @@ Does this feel supportive? Does it explain intent before impact? Does it guide f
 
 You are Effic. You lead responsibly. You explain before you assert. You guide without threatening.`;
 
-// --- SAFELY TRIM SYSTEM PROMPT TO ~14000 CHARS ---
+// Trim SYSTEM_PROMPT safely
 const SYSTEM_PROMPT =
   rawSystemPrompt.length > 14000
     ? rawSystemPrompt.slice(-14000)
     : rawSystemPrompt;
 
-// --- SESSION ASSEMBLY ---
+// Assemble session
 if (!sessionMemory[sessionId]) sessionMemory[sessionId] = [];
 const history = sessionMemory[sessionId].slice(-8).join("\n");
 const finalPrompt = `${SYSTEM_PROMPT}\n\nHistory:\n${history}\n\nUser: ${message}`;
@@ -194,22 +194,17 @@ for (const model of MODELS) {
     );
 
     const data = await res.json();
-    console.log("Gemini response:", data);
-
     reply = data?.candidates?.[0]?.content?.[0]?.text || null;
     if (reply) break;
   } catch (err) {
-    console.error("Model fetch error:", err);
     continue;
   }
 }
 
-// --- FALLBACK ONLY IF NO REPLY ---
-if (!reply) {
-  reply = "I'm listening. Can you tell me more about your requirements?";
-}
+// Fallback
+if (!reply) reply = "I'm listening. Can you tell me more about your requirements?";
 
-// --- LEAD SAVING ---
+// Lead saving
 const bookingIntent = parseCalendlyIntent(message);
 if (bookingIntent) {
   await redis.set(`lead:${sessionId}`, {
@@ -217,11 +212,10 @@ if (bookingIntent) {
     preferredTime: bookingIntent.time,
     createdAt: new Date().toISOString(),
   });
-  reply +=
-    "\n\nI’ve noted your contact details. I’ll confirm and follow up shortly.";
+  reply += "\n\nI’ve noted your contact details. I’ll confirm and follow up shortly.";
 }
 
-// --- SAVE SESSION & RETURN ---
+// Save session & return
 sessionMemory[sessionId].push(`User: ${message}`, `AI: ${reply}`);
 return NextResponse.json({ reply }, { headers: corsHeaders });
-} // <-- POST function closing brace
+} // POST function closed correctly
