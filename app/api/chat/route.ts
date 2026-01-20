@@ -63,7 +63,7 @@ export async function POST(req: Request) {
       return NextResponse.json(
         {
           reply:
-            "Your trial ends! Reach out to us clearly to move forward or explore our website for distilled info.",
+            "Our apologies — the AI is under maintenance at the moment. If you’re exploring or need clarity, the website covers the essentials, and we’re available directly to help you move forward.",
         },
         { headers: corsHeaders }
       );
